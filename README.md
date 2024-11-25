@@ -21,8 +21,8 @@ This project focuses on evaluating large language model (LLM) agents for fuzzing
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/llm-fuzzing-evaluation.git
-   cd llm-fuzzing-evaluation
+   git clone https://github.com/zhangutah/LLM-reasoning-agents.git
+   cd LLM-reasoning-agents
    ```
 
 2. Install the necessary packages:
@@ -41,7 +41,7 @@ This project focuses on evaluating large language model (LLM) agents for fuzzing
    python agents/plan_harness_gen.py
    ```
 
-3. **Tools**: execution tools for LLM agents , or direct use with main function.
+3. **Tools**: execution tools for LLM agents, or direct use with main function.
 
 
 ## License
