@@ -43,6 +43,28 @@ This project focuses on evaluating large language model (LLM) agents for fuzzing
 
 3. **Tools**: execution tools for LLM agents, or direct use with main function.
 
+### Instructions for Building and Running the Docker Container
+
+1. **Build the Docker Image:**
+
+   Replace `your_openai_api_key` and `your_tavily_api_key` with your actual keys, or pass them at runtime.
+
+   ```bash
+   docker build -t llm-agents-fuzzing-app .
+   ```
+
+2. **Run the Docker Container:**
+
+   You must provide the required environment variables when running the container. The optional `LANGCHAIN_API_KEY` can also be set if needed.
+
+   ```bash
+   docker run -e OPENAI_API_KEY=your_openai_api_key \
+              -e TAVILY_API_KEY=your_tavily_api_key \
+              -e LANGCHAIN_API_KEY=your_langchain_api_key \
+              llm-agents-fuzzing-app
+   ```
+
+Make sure to replace `your_openai_api_key`, `your_tavily_api_key`, and `your_langchain_api_key` with your actual API keys.
 
 ## License
 
