@@ -4,8 +4,9 @@ from typing import Dict, Any
 
 
 class ClangdLspClient:
-    def __init__(self, workspace_path):
+    def __init__(self, workspace_path, language="c"):
         self.workspace_path = workspace_path
+        self.language = language
         self.server_process = None
         self.reader = None
         self.writer = None
@@ -110,11 +111,12 @@ class ClangdLspClient:
                     "definition": {"dynamicRegistration": True},
                     "declaration": {"dynamicRegistration": True},
                     "references": {"dynamicRegistration": True},
+                    "callHierarchy": {"dynamicRegistration": True},
+                    "typeDefinition": {"dynamicRegistration": True},
+
                 }
-            },
-            "initializationOptions": {
-                "compilationDatabasePath": f"{self.workspace_path}/compile_commands.json"
-            },
+
+            }
         }
         response = await self.send_request("initialize", params)
         print(f"Initialize response: {response}")
@@ -145,7 +147,7 @@ class ClangdLspClient:
         params = {
             "textDocument": {
                 "uri": file_uri,
-                "languageId": "c",  # Changed from "java" to "c"
+                "languageId": self.language,  # Changed from "java" to "c"
                 "version": 1,
                 "text": text,
             }
@@ -219,16 +221,16 @@ class ClangdLspClient:
 
 
 async def main():
-    workspace_path = "/src"
-    definition_file = f"{workspace_path}/libtiff/libtiff/tif_aux.c"
-    reference_file = f"{workspace_path}/libtiff/libtiff/tif_write.c"
+    workspace_path = "/src/libtiff"
+    # definition_file = f"{workspace_path}/libtiff/tif_aux.c"
+    reference_file = f"{workspace_path}/tools/tiffdither.c"
 
-    client = ClangdLspClient(workspace_path)
+    client = ClangdLspClient(workspace_path, language="c++")
     await client.start_server()
     await client.initialize()
 
     print("Opening files...")
-    await client.open_file(definition_file)
+    # await client.open_file(definition_file)
     await client.open_file(reference_file)
     
     print("Waiting for clangd to index files...")
@@ -238,8 +240,8 @@ async def main():
     print("\nFinding declaration...")
     declaration_response = await client.find_declaration(
         reference_file,
-        line=932,  # 933 - 1 (0-based)
-        character=16
+        line=275,  # 933 - 1 (0-based)
+        character=8
     )
     print("Declaration location:")
     print(client.format_location_response(declaration_response))
@@ -248,8 +250,8 @@ async def main():
     print("\nFinding definition...")
     definition_response = await client.find_definition(
         reference_file,
-        line=932,
-        character=16
+        line=275,
+        character=8
     )
     print("Definition location:")
     print(client.format_location_response(definition_response))
@@ -257,9 +259,9 @@ async def main():
     # Find references
     print("\nFinding references...")
     references_response = await client.find_references(
-        definition_file,
-        line=130,  # Adjust based on actual definition location
-        character=19  # Adjust based on actual definition location
+        reference_file,
+        line=275,  # Adjust based on actual definition location
+        character=8  # Adjust based on actual definition location
     )
     print("Reference locations:")
     print(client.format_location_response(references_response))
