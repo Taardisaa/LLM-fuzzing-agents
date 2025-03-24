@@ -37,6 +37,7 @@ class FuzzerRunner():
                     '-len_control=0',
                         # Timeout per testcase.
                     '-timeout=30',
+                    '-detect_leaks=0',
             ]
 
         try:

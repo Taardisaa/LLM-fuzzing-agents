@@ -86,7 +86,7 @@ compile_fix_prompt = '''
 {harness_code}
 ```
 
-The above C code has compilation error.
+The above {project_lang} code has compilation error.
 
 
 The error description is: 
@@ -104,7 +104,7 @@ fuzz_fix_prompt = '''
 {harness_code}
 ```
 
-The above C code can be built successfully but has the following errors when runing fuzzer.
+The above {project_lang} code can be built successfully but has the following errors when runing fuzzer.
 
 {error_msg}
 
@@ -240,7 +240,7 @@ class ISSTAFuzzer(AgentFuzzer):
                 # clear_msg_flag: bool, save_dir: str, cache_dir: str, code_callback=None , logger=None)
         
         #  compile_fix_prompt: str, fuzz_fix_prompt: str, clear_msg_flag: bool)
-        fix_builder = FixerPromptBuilder(compile_fix_prompt, fuzz_fix_prompt, self.clear_msg_flag)
+        fix_builder = FixerPromptBuilder(compile_fix_prompt, fuzz_fix_prompt,self.project_lang, self.clear_msg_flag)
 
         code_fixer = CodeFixer(fixer_llm, self.max_fix, self.max_tool_call,  self.save_dir, self.cache_dir,
                                  code_callback=code_formater.extract_code, logger=self.logger)

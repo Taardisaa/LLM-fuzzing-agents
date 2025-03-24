@@ -7,6 +7,9 @@ import logging
 import subprocess as sp
 from constants import LSPResults, Retriever, DockerResults, PROJECT_PATH
 from multiprocessing import Process, Queue
+from langchain_core.tools import tool
+
+
 
 header_desc_mapping = {
         ToolDescMode.Simple: """
@@ -65,7 +68,7 @@ class CodeRetriever():
         self.logger = logger
         self.docker_tool = DockerUtils(self.ossfuzz_dir, self.project_name, self.new_project_name, self.project_lang)
 
-    @catch_exception
+    @tool
     def view_code(self, file_path: str, line_start: int, line_end: int) -> str:
         """
         Reads a specific portion of code from the file path.
@@ -211,37 +214,100 @@ class CodeRetriever():
         return lsp_resp
 
 
-    @catch_exception
     def get_symbol_header(self, symbol_name: str, retriever: str = Retriever.Mixed) -> str:
-        
-        declaration = self.get_symbol_info(symbol_name, LSPFunction.Header, retriever)
-   
-        if len(declaration) == 0:
-            self.logger.warning(f"No such symbol: {symbol_name} found!")
-            return LSPResults.NoResult # No declaration found
+        """
+        Find the header file path containing the declaration of a specified symbol name.
+        Args:
+            symbol_name (str): The name of the symbol to search for.
+        Returns:
+            str: If the declaration is found, returns the absolute path to the header file.
+                 If no declaration is found, returns None.
+        Example:
+            >>> get_symbol_header("cJSON")
+            "/src/cJSON.h"
+            >>> get_symbol_header("ada::parser::parse_url<ada::url>")
+            "/src/ada-url/ada/url.h"
+        """
+        name_list = symbol_name.split("::")
+        for i in range(len(name_list)):
+            new_symbol_name = "::".join(name_list[i:])
+            declaration = self.get_symbol_info(new_symbol_name, LSPFunction.Header, retriever)
 
-        if len(declaration) > 1:
-            self.logger.warning(f"Multiple declaration found for {symbol_name}, please check the symbol name")
+            if len(declaration) > 1:
+                self.logger.warning(f"Multiple declaration found for {new_symbol_name}, please check the symbol name")
 
-            all_headers = set()
-            for decl in declaration:
-                all_headers.add(decl["file_path"])
+                all_headers = set()
+                for decl in declaration:
+                    all_headers.add(decl["file_path"])
+                
+                all_headers = "\n".join(all_headers)
+                return all_headers
+            elif len(declaration) == 1:
+                absolute_path = declaration[0]["file_path"]
+                return absolute_path
             
-            all_headers = "\n".join(all_headers)
-            return all_headers
-
-        absolute_path = declaration[0]["file_path"]
-        return absolute_path
+        self.logger.warning(f"No such symbol: {symbol_name} found!")
+        return LSPResults.NoResult # No declaration found
 
     def get_symbol_declaration(self, symbol_name, retriever: str = Retriever.Mixed):
+        """
+        Get the declaration of a symbol from the project.
+        Args:
+            symbol_name (str): The name of the symbol to find the declaration for
+        Returns:
+            str: The declaration of the symbol, or None if not found
+                For multiple declarations, returns a combined result
+        Example:
+            >>> code_retriever.get_symbol_declaration("MyClass")
+            [{'source_code': 'MyClass {...}',
+              'file_path': '/src/xx',
+              'line': 10}]
+        """
+        
         declaration = self.get_symbol_info(symbol_name, LSPFunction.Declaration, retriever)
         # handle multiple declaration
         return declaration
 
     def get_symbol_definition(self, symbol_name, retriever: str = Retriever.Mixed):
+        """
+        Retrieves the definition(s) for a specified symbol using LSP.
+        Args:
+            symbol_name (str): The name of the symbol to look up
+            retriever (str, optional): The retriever strategy to use. Defaults to Retriever.Mixed.
+        Returns:
+            Union[List[Location], None]: List of locations where the symbol is defined, or None if not found.
+            Each location contains file path and position information.
+        See Also:
+            get_symbol_info(): The underlying method used to get symbol information
+            
+        Example:
+            >>> code_retriever.get_symbol_definition("cJSON_Parse")
+            [{'source_code': 'cJSON *cJSON_Parse(const char *value) {...}',
+              'file_path': '/src/cJSON.c',
+              'line': 120}]
+        """
+
+
         return self.get_symbol_info(symbol_name, LSPFunction.Definition, retriever)
 
     def get_symbol_references(self, symbol_name, retriever: str = Retriever.Mixed):
+        """
+        Get references to a symbol across all workspace files.
+        Args:
+            symbol_name (str): The name of the symbol to find references for
+        Returns:
+            list: A list of functions that used the symbol name in the workspace
+        Example:
+            >>> references = get_symbol_references("cJSON_Parse")
+            >>> references
+            [{'source_code': 'function1 {...}',
+              'file_path': '/src/xx',
+              'line': 10},
+             {'source_code': 'function2 {...}',
+              'file_path': '/src/yy',
+              'line': 20}]
+        """
+
         return self.get_symbol_info(symbol_name, LSPFunction.References, retriever)
 
 

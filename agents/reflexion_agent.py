@@ -25,7 +25,7 @@ import atexit
 import asyncio
 import json
 from tools.fuzz_tools.log_parser import CompileErrorExtractor
-from prompts.raw_prompts import CODE_FIX_PROMPT, EXTRACT_CODE_PROMPT, CODE_FIX_PROMPT_TOOLS
+from prompts.raw_prompts import CODE_FIX_PROMPT, EXTRACT_CODE_PROMPT, FUZZ_FIX_PROMPT, INIT_PROMPT
 from utils.misc import plot_graph, load_pormpt_template, save_code_to_file
 from tools.fuzz_tools.compiler import Compiler
 from tools.code_retriever import CodeRetriever, header_desc_mapping
@@ -218,22 +218,23 @@ class CompilerWraper(Compiler):
         return {"messages": ("user", END + "Link Error, tried all harness")}
 
 class FixerPromptBuilder:
-    def __init__(self, compile_fix_prompt: str, fuzz_fix_prompt: str, clear_msg_flag: bool):
+    def __init__(self, compile_fix_prompt: str, fuzz_fix_prompt: str, project_lang: LanguageType, clear_msg_flag: bool):
         self.compile_fix_prompt = compile_fix_prompt
         self.fuzz_fix_prompt = fuzz_fix_prompt
+        self.project_lang = project_lang
         self.clear_msg_flag = clear_msg_flag
 
     def build_compile_prompt(self, harness_code, error_msg):
         '''
         Build the prompt for the code fixer. If you need to customize the prompt, you can override this function.
         '''
-        return self.compile_fix_prompt.format(harness_code=harness_code, error_msg=error_msg)
+        return self.compile_fix_prompt.format(harness_code=harness_code, error_msg=error_msg, project_lang=self.project_lang)
 
     def build_fuzz_prompt(self, harness_code, error_msg):
         '''
         Build the prompt for the code fixer. If you need to customize the prompt, you can override this function.
         '''
-        return self.fuzz_fix_prompt.format(harness_code=harness_code, error_msg=error_msg)
+        return self.fuzz_fix_prompt.format(harness_code=harness_code, error_msg=error_msg, project_lang=self.project_lang)
 
     def respond(self, state: dict):
         fix_counter = state.get("fix_counter", 0)
@@ -373,8 +374,8 @@ class AgentFuzzer():
     FixBuilderNode = "FixBuilder"
 
     def __init__(self, model_name: str, ossfuzz_dir: str, project_name: str, function_signature: str,
-                 usage_token_limit: int, run_time: int, max_fix: int, max_tool_call: int,  clear_msg_flag: bool,
-                 save_dir: str, cache_dir: str):
+                 usage_token_limit: int, run_time: int, max_fix: int, max_tool_call: int,  
+                 clear_msg_flag: bool, save_dir: str, cache_dir: str):
         
         self.eailier_stop_flag = False
 
@@ -718,21 +719,16 @@ class AgentFuzzer():
     def build_graph(self):
 
         llm = ChatOpenAI(model=self.model_name)
-        code_retriever = CodeRetriever(self.ossfuzz_dir, self.project_name, self.new_project_name, self.logger)
+        code_retriever = CodeRetriever(self.ossfuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.cache_dir, self.logger)
        
         # decide whether to use the tool according to the header_desc_mode    
         tools = []
-        if self.header_desc_mode:
-            tool = StructuredTool.from_function(
-                    func=code_retriever.get_header_path,
-                    name="get_header_path",
-                    description=header_desc_mapping[ToolDescMode.Detailed],
-                )
-            tools.append(tool)
-            code_fixer_prompt = CODE_FIX_PROMPT_TOOLS
-        # header_desc_mode is none for disabling tool
-        else:
-            code_fixer_prompt = CODE_FIX_PROMPT
+        tool = StructuredTool.from_function(
+                func=code_retriever.get_symbol_header,
+                name="get_symbol_header",
+                description=code_retriever.get_symbol_header.__doc__,
+            )
+        tools.append(tool)
 
         if tools:
             # bind the tools, the tools may be empty
@@ -746,28 +742,21 @@ class AgentFuzzer():
         llm_code_extract = llm.with_structured_output(CodeAnswerStruct)
         code_formater = CodeFormatTool(llm_code_extract, EXTRACT_CODE_PROMPT)
 
-        # read prompt according to the project language (extension of the harness file)
-        if self.oss_tool.get_extension() == LanguageType.CPP:
-           generator_prompt = load_pormpt_template(os.path.join(PROJECT_PATH, "prompts", "cpp_prompt.txt"))
-        elif self.oss_tool.get_extension() == LanguageType.C:
-            generator_prompt = load_pormpt_template(os.path.join(PROJECT_PATH, "prompts", "c_prompt.txt"))
-        else:
-            return 
-
-        # create the module
-        draft_responder = InitGenerator(llm_init_generator, self.save_dir, 
+        draft_responder = InitGenerator(llm_init_generator, self.max_tool_call, continue_flag=False, save_dir=self.save_dir, 
                                         code_callback=code_formater.extract_code, logger=self.logger)
 
-        fuzz_fix_prompt = ""
+        #  compile_fix_prompt: str, fuzz_fix_prompt: str, clear_msg_flag: bool)
+        fix_builder = FixerPromptBuilder(CODE_FIX_PROMPT, FUZZ_FIX_PROMPT, self.project_lang, self.clear_msg_flag)
+
         # code fixer needs old project name
-        code_fixer = CodeFixer(llm_code_fixer, code_fixer_prompt, fuzz_fix_prompt, self.max_fix,
-                                self.max_tool_call, self.clear_msg_flag, self.save_dir,
-                               code_callback=code_formater.extract_code, logger=self.logger)
+        code_fixer = CodeFixer(llm_code_fixer, self.max_fix, self.max_tool_call,  self.save_dir, self.cache_dir,
+                                 code_callback=code_formater.extract_code, logger=self.logger)
 
-        fuzzer = FuzzerWraper(self.ossfuzz_dir, self.project_name, self.new_project_name,
-                             self.project_fuzzer_name, self.run_time, self.save_dir, self.logger)
-
-        compiler = CompilerWraper(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.save_dir, self.logger)
+        fuzzer = FuzzerWraper(self.ossfuzz_dir, self.new_project_name, self.project_lang, 
+                             self.run_time,  self.save_dir,  self.logger)
+        
+        compiler = CompilerWraper(self.ossfuzz_dir, self.project_name, self.new_project_name, 
+                                  self.project_lang, self.harness_pairs, self.save_dir, self.logger)
 
         # build the graph
         builder = StateGraph(FuzzState)
@@ -778,6 +767,7 @@ class AgentFuzzer():
 
         builder.add_node(self.HarnessGeneratorNode, draft_responder.respond)
         builder.add_node(self.CompilerNode, compiler.compile)
+        builder.add_node(self.FixBuilderNode, fix_builder.respond)
         builder.add_node(self.CodeFixerNode, code_fixer.respond)
         builder.add_node(self.FixerToolNode, tool_node)
         builder.add_node(self.GenerationToolNode, tool_node)
@@ -786,13 +776,14 @@ class AgentFuzzer():
         # add edges
         builder.add_edge(START, self.HarnessGeneratorNode)
         builder.add_edge(self.FixerToolNode, self.CodeFixerNode)
+        builder.add_edge(self.FixBuilderNode, self.CodeFixerNode)
         builder.add_edge(self.GenerationToolNode, self.HarnessGeneratorNode)
 
         # add conditional edges
-        builder.add_conditional_edges(self.CompilerNode, self.compile_router_mapping,  [self.CodeFixerNode, self.FuzzerNode, END])
+        builder.add_conditional_edges(self.CompilerNode, self.compile_router_mapping,  [self.FixBuilderNode, self.FuzzerNode, END])
         builder.add_conditional_edges(self.CodeFixerNode, self.code_fixer_mapping,  [self.CompilerNode, self.FixerToolNode, END])
         builder.add_conditional_edges(self.HarnessGeneratorNode, self.generator_mapping,  [self.CompilerNode, self.GenerationToolNode, END])
-        builder.add_conditional_edges(self.FuzzerNode, self.fuzzer_router_mapping, [self.CodeFixerNode, END])
+        builder.add_conditional_edges(self.FuzzerNode, self.fuzzer_router_mapping, [self.FixBuilderNode, END])
 
         # the path map is mandatory
         graph = builder.compile(memory)
@@ -802,8 +793,13 @@ class AgentFuzzer():
         if self.eailier_stop_flag:
             return
         
-        prompt = ""
-        plot_graph(graph)
+        prompt = INIT_PROMPT.format(project_lang=self.project_lang,
+                                    project_name=self.project_name,
+                                    function_usage="",
+                                    function_document="",
+                                    function_signature=self.function_signature,
+                                    function_name=self.function_signature)
+        # plot_graph(graph)
         config = {"configurable": {"thread_id": "1"}}
         events = graph.stream(
             {"messages": [("user", prompt)]},
@@ -895,6 +891,7 @@ if __name__ == "__main__":
 
     # absolute path
     SAVE_DIR = "/home/yk/code/LLM-reasoning-agents/outputs/"
+    CACHE_DIR = "/home/yk/code/LLM-reasoning-agents/cache/"
     llm_name = "gpt-4o-mini"
     function_name = r"void tinyxml2::XMLElement::SetAttribute(const char *, const char *)"
     # function_name = r"OPJ_BOOL opj_jp2_get_tile(opj_jp2_t *, opj_stream_private_t *, opj_image_t *, opj_event_mgr_t *, OPJ_UINT32"
@@ -904,7 +901,14 @@ if __name__ == "__main__":
     # function_name = "void (anonymous namespace)::_RealWebSocket::operator()(struct CallbackAdapter *, const vector<unsigned char, std::__1::allocator<unsigned char> > &)"
     # function_name = "bool cpuinfo_linux_get_processor_core_id(uint32_t, DW_TAG_restrict_typeuint32_t *)"
 
-    agent_fuzzer = AgentFuzzer(llm_name, OSS_FUZZ_DIR, PROJECT_NAME, function_name, SAVE_DIR, run_time=0.5, max_fix=5, header_desc_mode="detailed")
+    # model_name: str, ossfuzz_dir: str, project_name: str, function_signature: str,
+                #  usage_token_limit: int, run_time: int, max_fix: int, max_tool_call: int,  clear_msg_flag: bool,
+                #  save_dir: str, cache_dir: str)
+
+    agent_fuzzer = AgentFuzzer(llm_name, OSS_FUZZ_DIR, PROJECT_NAME, function_name, usage_token_limit=1000, 
+                               run_time=0.5, max_fix=5, max_tool_call=30, clear_msg_flag=True, 
+                               save_dir=SAVE_DIR, cache_dir=CACHE_DIR)
+    
     atexit.register(agent_fuzzer.clean_workspace)
     
     # try:
@@ -914,5 +918,5 @@ if __name__ == "__main__":
 
 
     graph = agent_fuzzer.build_graph()
-    agent_fuzzer.run_graph()
+    agent_fuzzer.run_graph(graph)
     
