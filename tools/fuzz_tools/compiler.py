@@ -17,50 +17,44 @@ class Compiler():
 
         self.oss_tool = OSSFuzzUtils(oss_fuzz_dir, project_name, new_project_name)
         self.project_lang =  self.oss_tool.get_project_language()
-
-
         self.docker_tool = DockerUtils(oss_fuzz_dir, project_name, new_project_name, self.project_lang)
 
-        self.project_fuzzer_name, self.project_harness_path = self.oss_tool.get_harness_and_fuzzer()
-
-        self.harness_path = os.path.join(self.oss_fuzz_dir, "projects", self.new_project_name, os.path.basename(self.project_harness_path))
+        # self.fuzzer_name, self.harness_path = self.oss_tool.get_harness_and_fuzzer()
+        # self.harness_path = os.path.join(self.oss_fuzz_dir, "projects", self.new_project_name, os.path.basename(self.harness_path))
 
         self.build_harness_cmd = self.oss_tool.get_script_cmd("build_fuzzers")
         self.build_image_cmd =  self.oss_tool.get_script_cmd("build_image")
 
-    def write_dockerfile(self):
+    def write_dockerfile(self, harness_path: str):
         '''Copy the harness file to overwrite all existing harness files'''
         # write copy in dockerfile and re-build the image
 
         docker_file_path = os.path.join(self.oss_fuzz_dir,  "projects", self.new_project_name, 'Dockerfile')
         
+        # resotre the old dockerfile
         if os.path.exists(docker_file_path + '.bak'):
-            # resotre the old dockerfile
             shutil.copy(docker_file_path + '.bak', docker_file_path)
         else:
-            # save old dockerfile
             shutil.copy(docker_file_path, docker_file_path + '.bak')
 
         with open(docker_file_path, 'a') as f:
             # Add additional statement in dockerfile to overwrite with generated fuzzer
-            f.write(f'\nCOPY {os.path.basename( self.project_harness_path)} {self.project_harness_path}\n')
+            f.write(f'\nCOPY {os.path.basename(harness_path)} {harness_path}\n')
 
-    def recover_dockerfile(self):
-        '''Recover the dockerfile to the original state'''
-        docker_file_path = os.path.join(self.oss_fuzz_dir, "projects", self.new_project_name, 'Dockerfile')
-        if os.path.exists(docker_file_path + '.bak'):
-            shutil.copy(docker_file_path + '.bak', docker_file_path)
 
-    def compile_harness(self,  harness_code: str):
+    def compile(self,  harness_code: str, harness_path: str, fuzzer_name: str):
         '''Compile the generated harness code'''
 
         # Run build.sh. There are two possible outcomes:
         # 1. The code compiles successfully. 
         # 3. The code compiles but has a compile error. The code should be fixed.
 
-        self.write_dockerfile()
+        # write the dockerfile
+        self.write_dockerfile(harness_path)
+        
         # save the target to the project
-        save_code_to_file(harness_code, self.harness_path)
+        local_harness_path = os.path.join(self.oss_fuzz_dir, "projects", self.new_project_name, os.path.basename(harness_path))
+        save_code_to_file(harness_code, local_harness_path)
 
         # build the image
         if not self.docker_tool.build_image(self.build_image_cmd):
@@ -79,7 +73,7 @@ class Compiler():
 
             build_msg = remove_color_characters(sp_result.stdout)
             # succeed to run build command
-            fuzzer_name = os.path.join(self.oss_tool.get_path("fuzzer"), self.project_fuzzer_name)
+            fuzzer_name = os.path.join(self.oss_tool.get_path("fuzzer"), fuzzer_name)
             if os.path.exists(fuzzer_name):
                 return CompileResults.Success, build_msg
             else:

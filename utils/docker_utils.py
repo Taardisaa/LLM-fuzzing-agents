@@ -2,7 +2,7 @@ import docker
 from collections import defaultdict
 import subprocess as sp
 import os
-from constants import LanguageType, LSPResults, PROJECT_PATH
+from constants import LanguageType, PROJECT_PATH, DockerResults
 
 class DockerUtils:
 
@@ -50,18 +50,33 @@ class DockerUtils:
         cmd_res = container.exec_run(cmd, tty=True)  # 5 minutes timeout
         return cmd_res.output.decode("utf-8")
 
-    def run_docker_cmd(self, call_back: str, *args, **kargs) -> str:
+    def clean_build_dir(self) -> str:
+        """
+        Clean the /out directory in the Docker container.
+        """
+        def remove_call_back(container):
+            container.exec_run("rm -rf /out/*", tty=True)
+            container.exec_run("rm -rf /work/*", tty=True)
+
+        # clean the /out directory
+        self.run_call_back(remove_call_back)
+
+
+    def run_call_back(self, call_back: str, *args, **kargs) -> str:
         """
         Explore the directory structure of a Docker image hosted on GCR.
         :param image_name: Full image name (e.g., gcr.io/oss-fuzz/libxml2)
         """
-    
+        compile_out_path = os.path.join(self.ossfuzz_dir, "build", "out", self.new_project_name)
+        os.makedirs(compile_out_path, exist_ok=True)
+
         client = docker.from_env()
         try:
             # Create a container from the image without starting it
             container = client.containers.create(self.image_name, command="/bin/sh", tty=True,  # Allocate a pseudo-TTY
                                                  privileged=True,  # Enables privileged mode
                                                  environment={"FUZZING_LANGUAGE": self.project_lang},  # Set the environment variable
+                                                 volumes={compile_out_path: {"bind": "/out", "mode": "rw"}},  # Mount the project directory
                                                  )  # Mount the cache directory (if provided
             try:
                 # Start the container
@@ -77,8 +92,40 @@ class DockerUtils:
                 container.remove(force=True)
 
         except Exception as e:
-            return f"{LSPResults.DockerError}: {e}"
+            return f"{DockerResults.Error}: {e}"
       
+    def run_cmd(self, cmd_list: list[str], timeout: int = None, volumes: dict = None) -> str:
+
+        client = docker.from_env()
+        try:
+            container = client.containers.run(
+                self.image_name,
+                command=cmd_list,  # Simulating a long-running process
+                detach=True,
+                tty=True, 
+                volumes=volumes,
+                privileged=True,  # Enables privileged mode
+                environment={"FUZZING_LANGUAGE": self.project_lang},  # Set the environment variable
+            )
+
+            # Wait for the container to exit, with a timeout
+            container.wait(timeout=timeout)  # Timeout in seconds
+
+            logs = container.logs().decode('utf-8') 
+
+            container.stop()
+            container.remove()
+            
+            return logs
+
+        except Exception as e:
+            container.stop()
+            container.remove()
+            return f"{DockerResults.Error}: {e}"
+
+
+
+
 
     # def get_all_files(self, start_path: str) -> list[str]:
     #     '''Get all files in the project directory'''

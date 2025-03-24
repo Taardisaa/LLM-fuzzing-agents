@@ -98,7 +98,7 @@ class FuzzLogParser():
 
     def parse_log(self, log_file: str):
         try:
-            with open(log_file, "r") as file:
+            with open(log_file, "r", encoding="utf-8", errors='ignore') as file:
                 log = file.read()
             
             return self.parse_str(log)
@@ -113,55 +113,58 @@ class FuzzLogParser():
         # Define the error patterns
         error_patterns = ['ERROR: LeakSanitizer',  'ERROR: libFuzzer:', 'ERROR: AddressSanitizer']
         crash_patterns = "Test unit written to"
+        
+        if any(error_pattern in log for error_pattern in error_patterns):
+            error_type_line = []
+            stack_list = []
+            one_stack = []
 
-        if crash_patterns not in log:
-            # check the code coverage
-            
-            # Extract the number after `INITED cov:`
-            inited_cov = re.search(r"INITED cov: (\d+)", log)
-            inited_cov_value = inited_cov.group(1) if inited_cov else None
+            stack_index = 0
+            # Extract and print the errors
+            for line in log.split("\n"):
+                if any(error_pattern in line for error_pattern in error_patterns):
+                    error_type_line.append(line)
 
-             # Extract the number after `DONE   cov:`
-            done_cov = re.search(r"DONE\s+cov:\s+(\d+)", log)
-            done_cov_value = done_cov.group(1) if done_cov else None
+                if f"#{stack_index} 0x" in line:
+                    stack_index += 1
+                    one_stack.append(line)
+                # if the index break, it means the stack is finished
+                else:
+                    stack_index = 0
+                    if one_stack:
+                        stack_list.append(one_stack)
+                        one_stack = []
 
-            assert inited_cov_value, "INITED cov: not found"
-            assert done_cov_value, "DONE   cov: not found"
+            return FuzzResult.Crash, error_type_line, stack_list
 
-            if done_cov_value == inited_cov_value:
-                return FuzzResult.ConstantCoverageError, None, None
-            
-            return FuzzResult.NoError, None, None
+        # check the code coverage
+        
+        # Extract the number after `INITED cov:`
+        inited_cov = re.search(r"INITED\s+cov:\s+(\d+)", log)
+        inited_cov_value = inited_cov.group(1) if inited_cov else None
+
+            # Extract the number after `DONE   cov:`
+        done_cov = re.search(r"DONE\s+cov:\s+(\d+)", log)
+        done_cov_value = done_cov.group(1) if done_cov else None
+
+        if not inited_cov_value or not done_cov_value:
+            return FuzzResult.LackCovError, None, None
+
+        if done_cov_value == inited_cov_value:
+            return FuzzResult.ConstantCoverageError, None, None
+        
+        return FuzzResult.NoError, None, None
 
 
-        error_type_line = []
-        stack_list = []
-        one_stack = []
 
-        stack_index = 0
-        # Extract and print the errors
-        for line in log.split("\n"):
-            if any(error_pattern in line for error_pattern in error_patterns):
-                error_type_line.append(line)
-
-            if f"#{stack_index} 0x" in line:
-                stack_index += 1
-                one_stack.append(line)
-            # if the index break, it means the stack is finished
-            else:
-                stack_index = 0
-                if one_stack:
-                    stack_list.append(one_stack)
-                    one_stack = []
-
-        return FuzzResult.Crash, error_type_line, stack_list
 
 if __name__ == "__main__":
-    log_file = "/home/yk/code/fuzz-introspector/scripts/oss-fuzz-gen-e2e/workdir/oss-fuzz-gen/bench_results/output-libpcap-pcap_findalldevs/logs/run/01.c-F3.log"  # Replace with your log file path
-    with open(log_file, "r") as file:
-        log = file.read()
-    parser = FuzzLogParser(LanguageType.CPP)
-    res, error_type, stacks = parser.parse(log)
+    log_file = "/home/yk/code/LLM-reasoning-agents/outputs/issta1/igraph_vydpfqhpudatcelq/fuzzing5.log"  # Replace with your log file path
+    # with open(log_file, "r") as file:
+        # log = file.read()
+    parser = FuzzLogParser(LanguageType.C)
+    res, error_type, stacks = parser.parse_log(log_file)
+    print(res)
     print(error_type)
     print(stacks)
 

@@ -118,7 +118,7 @@ class EclipseJdtLsClient:
         params = {
             "textDocument": {
                 "uri": file_uri,
-                "languageId": "java",
+                "languageId": "c",
                 "version": 1,
                 "text": text,
             }
@@ -187,14 +187,14 @@ async def main():
     await client.initialize()
 
     # Open the Java file
-    print("TEST open_file")
+    print("===============TEST open_file======================")
     await client.open_file(file_path)
 
-    print("TEST find_definition")
+    print("==============================TEST find_definition====================")
     # Find definition (example: line 1, character 5)
-    await client.find_definition(file_path, line=25, character=22)
+    func_def = await client.find_definition(file_path, line=25, character=22)
 
-    print("TEST find_references")
+    print("==============================TEST find_references====================")
     # Find references (example: line 1, character 5)
     await client.find_references(file_path, line=23, character=24)
 
@@ -205,3 +205,4 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 
+    

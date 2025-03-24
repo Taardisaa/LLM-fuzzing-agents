@@ -1,8 +1,10 @@
 import os
 
 PROJECT_PATH = os.path.dirname(os.path.abspath(__file__))
-print(PROJECT_PATH)
+# print(PROJECT_PATH)
 
+ALL_FILE_EXTENSION = ["c", "cpp", "java", "py", "cc", "cxx"]
+ALL_HEADER_EXTENSION = ["h", "hpp", "hh"]
 
 class LSPResults():
     """Results of Language Server Protocol."""
@@ -11,6 +13,15 @@ class LSPResults():
     Retry = "retry"
     NoResult = "no result"
     DockerError = "docker error"
+
+class DockerResults():
+    Success = "success"
+    Error = "docker error"
+
+class Retriever:
+    LSP = "lsp"
+    Parser = "parser"
+    Mixed = "mixed"
 
 
 class LanguageType():
@@ -28,7 +39,7 @@ class LSPFunction():
 
 class CompileResults:
     Success = "Complie Success"
-    CodeError = "Code Error"
+    CodeError = "Compile Error"
     FuzzerError = "No Fuzzer"
     ImageError = "Build Image Error"
 
@@ -39,6 +50,7 @@ class FuzzResult:
     RunError = "Run Error"
     ReadLogError = "Read Log Error"
     ConstantCoverageError = "Constant Coverage Error"
+    LackCovError = "Lack initial coverage or the final done coverage"
 
 
 class ToolDescMode():

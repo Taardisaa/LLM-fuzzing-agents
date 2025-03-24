@@ -24,13 +24,13 @@ import yaml
 import atexit
 import asyncio
 import json
-from tools.log_parser import CompileErrorExtractor
+from tools.fuzz_tools.log_parser import CompileErrorExtractor
 from prompts.raw_prompts import CODE_FIX_PROMPT, EXTRACT_CODE_PROMPT, CODE_FIX_PROMPT_TOOLS
 from utils.misc import plot_graph, load_pormpt_template, save_code_to_file
-from tools.compiler import Compiler
+from tools.fuzz_tools.compiler import Compiler
 from tools.code_retriever import CodeRetriever, header_desc_mapping
-from tools.run_fuzzer import FuzzerRunner
-from constants import FuzzResult, ToolDescMode, LSPFunction
+from tools.fuzz_tools.run_fuzzer import FuzzerRunner
+from constants import FuzzResult, ToolDescMode, LSPFunction, ALL_FILE_EXTENSION, ALL_HEADER_EXTENSION, DockerResults
 from utils.oss_fuzz_utils import OSSFuzzUtils
 from utils.docker_utils import DockerUtils
 
@@ -54,8 +54,8 @@ class CodeFormatTool():
 
         source_code = self.llm.invoke(extract_prompt).source_code
         # deal with the new line
-        if "\\n" in source_code:
-            source_code = source_code.replace("\\n", "\n")
+        # if "\\n" in source_code:
+            # source_code = source_code.replace("\\n", "\n")
 
         # remove some useless string
         source_code = source_code.replace("```cpp", "")
@@ -86,7 +86,7 @@ class InitGenerator:
             
             # check if the tool call is too much
             if self.count_tool_call > self.max_tool_call:
-                return {"messages": END}
+                return {"messages": f"{END}. Initial Generator exceeds max tool call {self.max_tool_call}"}
             else:
                 return {"messages": response}
 
@@ -95,24 +95,27 @@ class InitGenerator:
 
         # add prompt to the messages
         if self.continue_flag:
-            source_code = state["messages"][0].content + source_code
+            full_source_code = state["messages"][0].content + source_code
+        else:
+            full_source_code = source_code
 
         # save source code to file
-        save_path = os.path.join(self.save_dir, "draft.txt")
-        save_code_to_file(source_code, save_path)
+        save_path = os.path.join(self.save_dir, "draft_fix0.txt")
+        save_code_to_file(full_source_code, save_path)
 
         self.logger.info(f"Generate Draft Code.")
-        return {"messages": [("assistant", source_code)], "harness_code": source_code}
+        return {"messages": ("assistant", source_code), "harness_code": full_source_code, "fix_counter": 0}
 
 
 class CompilerWraper(Compiler):
-    def __init__(self, oss_fuzz_dir: str, project_name: str, new_project_name: str, project_lang: str, save_dir: str, logger=None):
+    def __init__(self, oss_fuzz_dir: str, project_name: str, new_project_name: str,
+                     project_lang: str, harness_dict, save_dir: str, logger=None):
         super().__init__(oss_fuzz_dir, project_name, new_project_name)
         self.logger = logger
         self.project_lang = project_lang
         self.save_dir = save_dir
-        self.counter = 0
-
+        self.harness_dict = harness_dict
+        self.start_index = 0
 
     def extract_error_msg(self, all_msg: str) -> str:
         '''
@@ -134,11 +137,41 @@ class CompilerWraper(Compiler):
 # # 
 #         return "\n".join(final_msg)
 
-    def compile_harness(self, state: dict):
-        '''Compile the harness file'''
-        self.counter += 1
+    def _match_link_pattern(self, harness_file_name:str, pattern:str,  error_msg: str) -> bool:
+           # Find all matches
+        matches = re.findall(pattern, error_msg)
+
+        # Print the results
+        for file_name, function_name in matches:
+            # print(f"Error in file {file_name} for function {function_name}")
+            if file_name.strip() != harness_file_name.strip():
+                return True
+        return False
+
+    def is_link_error(self, error_msg: str, harness_path: str) -> bool:
+        '''Check if the error message is a link error'''
+
+        harness_file_name = os.path.basename(harness_path)
+        # 
+        link_error_pattern = r"DWARF error: invalid or unhandled FORM value: 0x25"
+        if link_error_pattern not in error_msg:
+            return False
         
-        self.logger.info(f'Start {self.counter}th Compile for {self.new_project_name}:{os.path.basename(self.project_harness_path)}')
+        # Regular expression to match the errored file and undefined function
+        # TODO only test on C Projects
+        undefined_pattern = r"(\w+\.(?:c|o)):.*undefined reference to `([^']+)'"
+        multi_definiation_pattern = r"(\w+\.(?:c|o)):.*multiple definition of `([^']+)'"
+        # Find all matches
+        for pattern in [undefined_pattern, multi_definiation_pattern]:
+            if self._match_link_pattern(harness_file_name, pattern, error_msg):
+                return True
+     
+        return False
+
+    def compile(self, state: dict):
+        '''Compile the harness file'''
+        
+        fix_count = state.get("fix_counter", 0)
 
         # save the harness code to current output directory
         save_code_to_file(state["harness_code"], os.path.join(self.save_dir, f"harness.txt"))
@@ -146,57 +179,50 @@ class CompilerWraper(Compiler):
         # if self.counter > self.max_compile:
             # log_if_exists(self.logger, f"Max compile times reached for {self.new_project_name}:{self.project_harness_name}", logger_level=logging.INFO)
             # return {"messages": END}
-        
-        # compile the harness file
-        compile_res, all_msg = super().compile_harness(state["harness_code"])
 
-        self.logger.info(f'Compile Res: {compile_res} for {self.new_project_name}:{os.path.basename(self.project_harness_path)}')
+        for i, (fuzzer_name, harness_path) in enumerate(self.harness_dict.items()):
+            
+            if i < self.start_index:
+                continue
 
-        # Project realted error, No need to continue
-        if compile_res in [CompileResults.ImageError, CompileResults.FuzzerError]:
-            return {"messages": END}
-        
-        # extract error msg
-        error_msg = ""
-        if compile_res == CompileResults.CodeError:
-            error_msg = self.extract_error_msg(all_msg)
-            save_code_to_file(error_msg, os.path.join(self.save_dir, f"build_error_{self.counter}.log"))
-       
-        # save raw error message
-        save_code_to_file(all_msg, os.path.join(self.save_dir, f"build_{self.counter}.log"))
+            self.logger.info(f'Compile Start for draft_fix{fix_count} using {fuzzer_name}.')
+            # compile the harness file
+            compile_res, all_msg = super().compile(state["harness_code"], harness_path, fuzzer_name)
 
-        return {"messages": compile_res, "build_msg": error_msg}
+            self.logger.info(f'Compile End for draft_fix{fix_count} using {fuzzer_name}. Res: {compile_res}')
 
+            save_code_to_file(all_msg, os.path.join(self.save_dir, f"build_{fix_count}.log"))
 
-class CodeFixer:
-    def __init__(self, runnable, compile_fix_prompt: str, fuzz_fix_prompt: str, max_fix: int, max_tool_call: int, 
-                clear_msg_flag: bool, save_dir: str, cache_dir: str, code_callback=None , logger=None):
+            # Project realted error, No need to continue
+            if compile_res in [CompileResults.ImageError, CompileResults.FuzzerError]:
+                return {"messages": ("user", END + compile_res)}
+            
+            # compile error
+            elif compile_res == CompileResults.CodeError:
+                # extract error msg
+                error_msg = self.extract_error_msg(all_msg)
+                save_code_to_file(error_msg, os.path.join(self.save_dir, f"build_error_{fix_count}.log"))
 
-        self.runnable = runnable
-        self.save_dir = save_dir
-        self.cache_dir = cache_dir
+                if not self.is_link_error(error_msg, harness_path):
+                    # save raw error message
+                    return {"messages": ("user", compile_res), "build_msg": error_msg, "fuzzer_name": fuzzer_name}
+                else:
+                    # link error, try next harness
+                    self.logger.error(f"Link Error for draft_fix{fix_count} using {fuzzer_name}, Now try another harness file.")
+                    self.start_index = i+1
 
-        self.code_callback = code_callback
-        self.logger = logger
-        self.max_tool_call = max_tool_call
-        self.max_fix = max_fix
-        self.clear_msg_flag = clear_msg_flag
-        self.fix_counter = 0
-        self.tool_call_counter = 0
+            # compile success
+            else:
+                return {"messages": ("user", compile_res), "build_msg": all_msg, "fuzzer_name": fuzzer_name}
+                
+        return {"messages": ("user", END + "Link Error, tried all harness")}
+
+class FixerPromptBuilder:
+    def __init__(self, compile_fix_prompt: str, fuzz_fix_prompt: str, clear_msg_flag: bool):
         self.compile_fix_prompt = compile_fix_prompt
         self.fuzz_fix_prompt = fuzz_fix_prompt
+        self.clear_msg_flag = clear_msg_flag
 
-# def get_related_infos(cut_code, err_line, aainfo, api_funcs, examples):
-	# related_infos = [ '' ]
-	# if aainfo:
-	# 	related_api = find_relevant_apis(cut_code, err_line, api_funcs)
-	# 	if related_api != None:
-	# 		related_api_info = get_api_info(api_funcs[related_api])
-	# 		for related_api_usage in get_example_usages(examples, related_api):
-	# 			related_info = '\nThe definition of `%s`:\n%s\n\n%s\n\n' % (related_api, related_api_info, related_api_usage)
-	# 			related_infos.append(related_info)
-
-    # if you need 
     def build_compile_prompt(self, harness_code, error_msg):
         '''
         Build the prompt for the code fixer. If you need to customize the prompt, you can override this function.
@@ -209,110 +235,145 @@ class CodeFixer:
         '''
         return self.fuzz_fix_prompt.format(harness_code=harness_code, error_msg=error_msg)
 
-    def build_prompt(self, last_message: str, state: dict):
-
-        if last_message.content == CompileResults.CodeError:
-            return self.build_compile_prompt(state["harness_code"], state["build_msg"])
-        else:
-            return self.build_fuzz_prompt(state["harness_code"], state["fuzz_msg"])
-    
     def respond(self, state: dict):
-        last_message = state["messages"][-1]
-        if isinstance(last_message, ToolMessage):
-            return self._respond_helper(state)
-        
-        # not tool message
-        if self.fix_counter == 0 or self.clear_msg_flag:
-            # clear previous messages, need to build the prompt
+        fix_counter = state.get("fix_counter", 0)
+        last_message = state["messages"][-1].content
+        if fix_counter == 0 or self.clear_msg_flag:
+            # clear previous messages, need to build the fix prompt based on the provided template 
             state["messages"].clear()
-            fix_prompt = self.build_prompt(last_message, state)
+            if last_message.startswith(CompileResults.CodeError):
+                fix_prompt = self.build_compile_prompt(state["harness_code"], state["build_msg"])
+            else:
+                fix_prompt = self.build_fuzz_prompt(state["harness_code"], state["fuzz_msg"])
         else:
             # keep the previous messages, just add the error message
-            fix_prompt = state["build_msg"]  if last_message.content == CompileResults.CodeError else state["fuzz_msg"]
+            if last_message.startswith(CompileResults.CodeError):
+                fix_prompt = "Complie Error Messages:\n" + state["build_msg"]
+            else:
+                fix_prompt = "Fuzz Error Messages:\n" + state["fuzz_msg"]
 
-        state["messages"].append(("user", fix_prompt))
-        return self._respond_helper(state)
-    
-    def _respond_helper(self, state: dict):
+        return {"messages": ("user", fix_prompt)}
 
+class CodeFixer:
+    def __init__(self, runnable, max_fix: int, max_tool_call: int, save_dir: str, 
+                    cache_dir: str, code_callback=None , logger=None):
 
+        self.runnable = runnable
+        self.save_dir = save_dir
+        self.cache_dir = cache_dir
+
+        self.code_callback = code_callback
+        self.logger = logger
+        self.max_tool_call = max_tool_call
+        self.max_fix = max_fix
+        self.tool_call_counter = 0
+
+# def get_related_infos(cut_code, err_line, aainfo, api_funcs, examples):
+	# related_infos = [ '' ]
+	# if aainfo:
+	# 	related_api = find_relevant_apis(cut_code, err_line, api_funcs)
+	# 	if related_api != None:
+	# 		related_api_info = get_api_info(api_funcs[related_api])
+	# 		for related_api_usage in get_example_usages(examples, related_api):
+	# 			related_info = '\nThe definition of `%s`:\n%s\n\n%s\n\n' % (related_api, related_api_info, related_api_usage)
+	# 			related_infos.append(related_info)
+
+    def respond(self, state: dict):
+        fix_counter = state.get("fix_counter", 0)
+        self.logger.info(f"Fix start for draft_fix{fix_counter}.")
+   
         response = self.runnable.invoke(state["messages"])
 
         # check if call the tool
         if len(response.tool_calls) != 0:
             self.tool_call_counter += 1
+
             if self.tool_call_counter > self.max_tool_call:
                 self.logger.info(f"Max tool call times ({self.max_tool_call}) reached.")
-                return {"messages": END}
+                return {"messages": f"{END}. Max tool call times ({self.max_tool_call}) reached."}
 
             # tool call response
             return {"messages": response}
+       
+        # not call the tool, the response is the code. 
+        self.logger.info(f"Fix end for draft_fix{fix_counter}.")
 
-        self.fix_counter += 1
-        if self.fix_counter > self.max_fix:
-            self.logger.info(f"Max fix times ({self.max_fix}) reached")
-            return {"messages": END}
+        fix_counter = fix_counter+1
+        if fix_counter > self.max_fix:
+            self.logger.info(f"Max fix time ({self.max_fix}) reached")
+            return {"messages": f"{END}. Max fix times ({self.max_fix}) reached", "fix_counter": fix_counter}
         
-        self.logger.info(f"Fix Counter: {self.fix_counter}")
         # extract the code
         source_code = self.code_callback(response.content)
 
-        new_save_name = "draft_fix{}.txt".format(self.fix_counter)
+        new_save_name = "draft_fix{}.txt".format(fix_counter)
         save_code_to_file(source_code, os.path.join(self.save_dir, new_save_name))
         # update the harness code
-        return {"messages": ("assistant", response.content), "harness_code": source_code}
+        return {"messages": ("assistant", source_code), "harness_code": source_code, "fix_counter": fix_counter}
 
 
 class FuzzerWraper(FuzzerRunner):
     def __init__(self, oss_fuzz_dir: str, new_project_name: str,
-                 fuzzer_name: str, project_lang: str, run_timeout: int , 
+                 project_lang: str, run_timeout: int , 
                  save_dir: str, logger=None):
 
-        super().__init__(oss_fuzz_dir, new_project_name, fuzzer_name, project_lang, run_timeout, save_dir)
+        super().__init__(oss_fuzz_dir, new_project_name, project_lang, run_timeout, save_dir)
         self.logger = logger
 
         
     def run_fuzzing(self, state: dict):
-        self.logger.info(f"Run {self.counter+1}th Fuzzer for {self.new_project_name}:{self.fuzzer_name}")
+        fix_counter = state.get("fix_counter", 0)
+        fuzzer_name = state.get("fuzzer_name", "")
+
+        self.logger.info(f"Run {fix_counter}th Fuzzer for {self.new_project_name}:{fuzzer_name}")
        
-        fuzz_res, error_type_line, stack_list = super().run_fuzzing()
+        fuzz_res, error_type_line, stack_list = super().run_fuzzing(fix_counter, fuzzer_name)
         
-        self.logger.info(f"Fuzz res:{fuzz_res}, {error_type_line} for {self.new_project_name}:{self.fuzzer_name}")
+        self.logger.info(f"Fuzz res:{fuzz_res}, {error_type_line} for {self.new_project_name}:{fuzzer_name}")
     
         # unable to fix the code
         if fuzz_res == FuzzResult.RunError:
-            return {"messages": END}
+            return {"messages": ("user", END + "Run Error")}
         elif fuzz_res == FuzzResult.ConstantCoverageError:
-            return {"messages": fuzz_res, "fuzz_msg": "The above code can be built successfully but its fuzzing seems not effective since the coverage never change. "}
+            return {"messages": ("user", fuzz_res), "fuzz_msg": "The above code can be built successfully but its fuzzing seems not effective since the coverage never change. Please make sure the fuzz data is used."}
         elif fuzz_res == FuzzResult.ReadLogError:
-            return {"messages": fuzz_res, "fuzz_msg": "The above code can be built successfully but it generates a extreme large log which indicates the fuzz driver may include some bugs. "}
+            return {"messages": ("user", fuzz_res), "fuzz_msg": '''The above code can be built successfully but it generates a extreme large log which indicates the fuzz driver may include some bugs. 
+                                                                    Please do not print any information. '''}
+        elif fuzz_res == FuzzResult.LackCovError:
+            return {"messages": ("user", fuzz_res), "fuzz_msg": '''The above code can be built successfully but its fuzzing seems not effective since it lack the initial or final code coverage info.
+                                                                    Please make sure the fuzz data is used.'''}
         elif fuzz_res == FuzzResult.Crash:
             # extract the first error message
-            fuzz_error_msg = error_type_line[0] + "\n" + "\n".join(stack_list[0])
-            return {"messages": fuzz_res, "fuzz_msg": fuzz_error_msg}
+            error_type = error_type_line[0] if len(error_type_line) > 0 else "Unknown Crash, Unable to extract the error message"
+            first_stack = stack_list[0] if len(stack_list) > 0 else ["Unknown Crash, Unable to extract the stack trace"]
+            fuzz_error_msg = error_type + "\n" + "\n".join(first_stack)
+            return {"messages": ("user", fuzz_res), "fuzz_msg": fuzz_error_msg}
         else:
-            return {"messages": fuzz_res}
+            return {"messages": ("user", fuzz_res)}
 
 
 class FuzzState(TypedDict):
     messages: Annotated[list, add_messages]
     harness_code: str
     build_msg: str
-    build_res: CompileResults
     fuzz_msg: str
+    fix_counter: int
+    fuzzer_name: str
+
 
 class AgentFuzzer():
 
     # Constants
-    HarnessGenerator = "HarnessGenerator"
-    Compiler = "Compiler"
-    CodeFixer = "CodeFixer"
-    FixerTools = "FixerTools"
-    GenerationTools = "GenerationTools"
-    Fuzzer = "Fuzzer"
+    HarnessGeneratorNode = "HarnessGenerator"
+    CompilerNode = "Compiler"
+    CodeFixerNode = "CodeFixer"
+    FixerToolNode = "FixerTools"
+    GenerationToolNode = "GenerationTools"
+    FuzzerNode = "Fuzzer"
+    FixBuilderNode = "FixBuilder"
 
     def __init__(self, model_name: str, ossfuzz_dir: str, project_name: str, function_signature: str,
-                 run_time: int, max_fix: int, max_tool_call: int,  clear_msg_flag: bool,
+                 usage_token_limit: int, run_time: int, max_fix: int, max_tool_call: int,  clear_msg_flag: bool,
                  save_dir: str, cache_dir: str):
         
         self.eailier_stop_flag = False
@@ -321,6 +382,7 @@ class AgentFuzzer():
         self.ossfuzz_dir = ossfuzz_dir
         self.project_name = project_name
         self.function_signature = function_signature
+        self.usage_token_limit = usage_token_limit
         self.run_time = run_time
         self.max_fix = max_fix
         self.max_tool_call = max_tool_call
@@ -335,14 +397,23 @@ class AgentFuzzer():
 
         self.oss_tool = OSSFuzzUtils(self.ossfuzz_dir, self.project_name, self.new_project_name)
         self.project_lang = self.oss_tool.get_project_language()
-        self.project_fuzzer_name,  self.project_harness_path = self.oss_tool.get_harness_and_fuzzer()
 
         self.docker_tool = DockerUtils(self.ossfuzz_dir, self.project_name, self.new_project_name, self.project_lang)
         init_flag = self.init_workspace()
+
         if not init_flag:
             self.eailier_stop_flag = True
             self.logger.error("Failed to initialize the workspace. Return")
             return 
+        
+        # collect all harness_path, fuzzer pairs
+        _fuzzer_name,  _harness_path = self.oss_tool.get_harness_and_fuzzer()
+        self.harness_pairs = self.cahche_harness_fuzzer_pairs()
+        if  _fuzzer_name not in self.harness_pairs:
+            self.harness_pairs[_fuzzer_name] = _harness_path
+        else:
+            # move the harness file to the first
+            self.harness_pairs = {_fuzzer_name: _harness_path, **self.harness_pairs}
 
     def setup_logging(self):
 
@@ -394,12 +465,19 @@ class AgentFuzzer():
         shutil.copytree(scr_path, dst_path, dirs_exist_ok=True)
 
         # copy lsp related files to the project directory
-        shutil.copy(os.path.join(PROJECT_PATH, "tools", "lsp_wrapper.py"), dst_path)
-        shutil.copy(os.path.join(PROJECT_PATH, "tools", "clanglsp.py"), dst_path)
-        shutil.copy(os.path.join(PROJECT_PATH, "tools", "language_parser.py"), dst_path)
+        # code_path = os.path.join(PROJECT_PATH, "tools", "code_tools")
+        # for filename in os.listdir(code_path):
+            # source_file = os.path.join(code_path, filename)
+            # destination_file = os.path.join(dst_path, filename)
+# 
+            # if not os.path.isdir(source_file):
+                # shutil.copy(source_file, destination_file)
+# 
         shutil.copy(os.path.join(PROJECT_PATH, "constants.py"), dst_path)
 
-
+        # save the function name
+        with open(os.path.join(self.save_dir, "function.txt"), 'w') as f:
+            f.write(self.function_signature)
 
         self.logger.info("Function: {}".format(self.function_signature))
         self.logger.info("Create a new project: {}".format(self.new_project_name))
@@ -415,15 +493,12 @@ class AgentFuzzer():
         # failed to build the image
         if not build_res:
             return False
-        
-        # save the function name
-        with open(os.path.join(self.save_dir, "function.txt"), 'w') as f:
-            f.write(self.function_signature)
 
         # cache the compile_commands.json
-        compile_res = self.cache_compile_commands()
-        if not compile_res:
-            return False
+        if self.project_lang in [LanguageType.C, LanguageType.CPP]:
+            compile_res = self.cache_compile_commands()
+            if not compile_res:
+                return False
         
         return True
 
@@ -441,10 +516,12 @@ class AgentFuzzer():
             # apt install bear
             f.write(f'\nRUN apt install -y bear\n')
             # install python library
-            f.write("RUN pip install tree-sitter-c\n")
-            f.write("RUN pip install tree-sitter-cpp\n")
-            f.write("RUN pip install tree-sitter-java\n")
-            f.write("RUN pip install tree-sitter\n")
+            f.write('RUN pip install "tree-sitter-c<=0.23.4"\n')
+            f.write('RUN pip install "tree-sitter-cpp<=0.23.4"\n')
+            f.write('RUN pip install "tree-sitter-java<=0.23.4"\n')
+            f.write('RUN pip install "tree-sitter<=0.24.0"\n')
+            f.write('RUN pip install "multilspy==0.0.14"\n')
+
 
     def cache_compile_commands(self) -> bool:
         
@@ -467,28 +544,123 @@ class AgentFuzzer():
             workdir = container_info['Config'].get('WorkingDir', '')
           
             try:
-                sp_result = sp.run(f"docker cp {container.id}:{os.path.join(workdir, cmd_json_name)}  {dir_path}", shell=True, check=True, stdout=sp.PIPE, stderr=sp.PIPE)
+                sp.run(f"docker cp {container.id}:{os.path.join(workdir, cmd_json_name)}  {dir_path}", shell=True, check=True, stdout=sp.PIPE, stderr=sp.PIPE)
             except Exception as e:
                 self.logger.error(f"docker copy error: {e}")
-                return False
+                return DockerResults.Error
 
-            return True
+            # cache the fuzzer name
+            fuzzer_str = self.docker_tool.contrainer_exec_run(container, "find /out/ -maxdepth 1 -type f")
+            with open(os.path.join(self.cache_dir, self.project_name, "fuzzer.txt"), 'w') as f:
+                f.write(fuzzer_str)
 
-        compile_cmd = self.docker_tool.run_docker_cmd(bear_call_back)
+            return DockerResults.Success
 
-        if not compile_cmd:
+        compile_cmd = self.docker_tool.run_call_back(bear_call_back)
+        if compile_cmd.startswith(DockerResults.Error):
             self.logger.error(f"No {cmd_json_name} , Exit")
             return False    
         return True
 
+    def find_fuzzers(self):
+          
+        fuzz_path = os.path.join(self.cache_dir, self.project_name, "fuzzer.txt")
+        if not os.path.exists(fuzz_path):
+            return []
+
+        with open(fuzz_path, 'r') as f:
+            fuzzer_str = f.read()
+
+        fuzzer_list = []
+        for fuzzer_path in fuzzer_str.splitlines():
+            # skip the directory
+            # if os.path.isdir(os.path.join(build_out_path, fuzzer_name)):
+                # continue
+
+            fuzzer_name = os.path.basename(fuzzer_path)
+
+            if "." in fuzzer_name:
+                continue
+            if "llvm-symbolizer" in fuzzer_name:
+                continue
+            fuzzer_list.append(fuzzer_name)
+
+        return fuzzer_list
+
+    def find_harnesses(self, fuzzer_list):
+      
+        # check whether the harness has corresponding harness file
+        '''Get all files in the project directory'''
+
+
+        harness_dict = {}
+        # Execute `find` command to recursively list files and directories
+        for fuzzer_name in fuzzer_list:
+            find_cmd = f"find  /src/ -name {fuzzer_name}.* -type f"
+
+            results = self.docker_tool.run_cmd(find_cmd)
+
+            if not results or results.startswith(DockerResults.Error):
+                continue
+
+            # split the directory structure
+            all_file_path = results.splitlines()
+
+            _temp_list = []
+            for file_path in all_file_path:
+                file_path = file_path.strip()
+                file_name = os.path.basename(file_path)
+                name, ext = file_name.split(".")
+                if ext in ALL_FILE_EXTENSION and name == fuzzer_name:
+                    _temp_list.append(file_path)
+                 
+            if len(_temp_list) > 1:
+                self.logger.info(f"Multiple harness files for {fuzzer_name}, {_temp_list}")
+                continue
+            
+            # only one harness file
+            if len(_temp_list) == 1:
+                harness_dict[fuzzer_name] = _temp_list[0]
+
+        return harness_dict
+
+    def cahche_harness_fuzzer_pairs(self):
+
+        harness_json_name = "harness_fuzzer_pairs.json"
+        json_path = os.path.join(self.cache_dir, self.project_name, harness_json_name)
+        if os.path.exists(json_path):
+            with open(json_path, 'r') as f:
+                harness_fuzzer_dict = json.load(f)
+                self.logger.info(f"Using Cached harness_fuzzer_pairs.json, content:{harness_fuzzer_dict}")
+                return harness_fuzzer_dict
+
+
+        fuzzer_list = self.find_fuzzers()
+        harness_fuzzer_dict = self.find_harnesses(fuzzer_list)
+
+        # save the harness pairs
+        with open(json_path, 'w') as f:
+            json.dump(harness_fuzzer_dict, f)
+
+        self.logger.info(f"Create harness_fuzzer_pairs.json, content:{harness_fuzzer_dict}")
+        return harness_fuzzer_dict
+
+
     def clean_workspace(self):
         '''Clean the workspace'''
         try:        
+
+            # first remove the out directory
+            self.docker_tool.clean_build_dir()
+            
             # remove the docker image here
             self.docker_tool.remove_image()
             self.logger.info("remove the docker image for {}".format(self.new_project_name))
             # remove the project directory
             shutil.rmtree(os.path.join(self.ossfuzz_dir, "projects", self.new_project_name))
+
+            # clean the build directory
+            shutil.rmtree(os.path.join(self.ossfuzz_dir, "build", "out", self.new_project_name))
 
             # remove the corpus, needs root permission
             # corpus_dir = os.path.join(self.save_dir, "corpora")
@@ -503,45 +675,45 @@ class AgentFuzzer():
 
         # print(messages)
         if last_message.content == CompileResults.Success:
-            return self.Fuzzer
+            return self.FuzzerNode
         elif last_message.content == CompileResults.CodeError:
-            return self.CodeFixer
+            return self.FixBuilderNode
         else:
             return END
 
     def code_fixer_mapping(self, state):
         last_message = state["messages"][-1]
 
-        if last_message.content == END:
+        if last_message.content.startswith(END):
             return END
         # call tools
         if len(last_message.tool_calls) != 0:
-            return self.FixerTools
+            return self.FixerToolNode
         else:
-            return self.Compiler
+            return self.CompilerNode
 
     def generator_mapping(self, state):
         last_message = state["messages"][-1]
 
-        if last_message.content == END:
+        if last_message.content.startswith(END):
             return END
 
         # call tools
         if len(last_message.tool_calls) != 0:
-            return self.GenerationTools
+            return self.GenerationToolNode
         else:
-            return self.Compiler
+            return self.CompilerNode
         
     def fuzzer_router_mapping(self, state):
         last_message = state["messages"][-1]
 
         # print(messages)
-        if last_message.content == FuzzResult.NoError:
+        if last_message.content.startswith(FuzzResult.NoError):
             return END
-        elif last_message.content == END:
+        elif last_message.content.startswith(END):
             return END
         else:
-            return self.CodeFixer
+            return self.FixBuilderNode
 
     def build_graph(self):
 
@@ -604,23 +776,23 @@ class AgentFuzzer():
         # add nodes
         tool_node = ToolNode(tools)
 
-        builder.add_node(self.HarnessGenerator, draft_responder.respond)
-        builder.add_node(self.Compiler, compiler.compile_harness)
-        builder.add_node(self.CodeFixer, code_fixer.respond)
-        builder.add_node(self.FixerTools, tool_node)
-        builder.add_node(self.GenerationTools, tool_node)
-        builder.add_node(self.Fuzzer, fuzzer.run_fuzzing)
+        builder.add_node(self.HarnessGeneratorNode, draft_responder.respond)
+        builder.add_node(self.CompilerNode, compiler.compile)
+        builder.add_node(self.CodeFixerNode, code_fixer.respond)
+        builder.add_node(self.FixerToolNode, tool_node)
+        builder.add_node(self.GenerationToolNode, tool_node)
+        builder.add_node(self.FuzzerNode, fuzzer.run_fuzzing)
 
         # add edges
-        builder.add_edge(START, self.HarnessGenerator)
-        builder.add_edge(self.FixerTools, self.CodeFixer)
-        builder.add_edge(self.GenerationTools, self.HarnessGenerator)
+        builder.add_edge(START, self.HarnessGeneratorNode)
+        builder.add_edge(self.FixerToolNode, self.CodeFixerNode)
+        builder.add_edge(self.GenerationToolNode, self.HarnessGeneratorNode)
 
         # add conditional edges
-        builder.add_conditional_edges(self.Compiler, self.compile_router_mapping,  [self.CodeFixer, self.Fuzzer, END])
-        builder.add_conditional_edges(self.CodeFixer, self.code_fixer_mapping,  [self.Compiler, self.FixerTools, END])
-        builder.add_conditional_edges(self.HarnessGenerator, self.generator_mapping,  [self.Compiler, self.GenerationTools, END])
-        builder.add_conditional_edges(self.Fuzzer, self.fuzzer_router_mapping, [self.CodeFixer, END])
+        builder.add_conditional_edges(self.CompilerNode, self.compile_router_mapping,  [self.CodeFixerNode, self.FuzzerNode, END])
+        builder.add_conditional_edges(self.CodeFixerNode, self.code_fixer_mapping,  [self.CompilerNode, self.FixerToolNode, END])
+        builder.add_conditional_edges(self.HarnessGeneratorNode, self.generator_mapping,  [self.CompilerNode, self.GenerationToolNode, END])
+        builder.add_conditional_edges(self.FuzzerNode, self.fuzzer_router_mapping, [self.CodeFixerNode, END])
 
         # the path map is mandatory
         graph = builder.compile(memory)
