@@ -58,15 +58,15 @@ class CodeRetriever():
     4. Symbol cross reference for a symbol name.
     '''
 
-    def __init__(self, ossfuzz_dir: str, project_name: str, new_project_name: str, project_lang: LanguageType, cache_dir: str, logger: logging.Logger):
+    def __init__(self, oss_fuzz_dir: str, project_name: str, new_project_name: str, project_lang: LanguageType, cache_dir: str, logger: logging.Logger):
 
-        self.ossfuzz_dir = ossfuzz_dir
+        self.oss_fuzz_dir = oss_fuzz_dir
         self.project_name = project_name
         self.new_project_name = new_project_name
         self.project_lang = project_lang
         self.cache_dir = cache_dir
         self.logger = logger
-        self.docker_tool = DockerUtils(self.ossfuzz_dir, self.project_name, self.new_project_name, self.project_lang)
+        self.docker_tool = DockerUtils(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang)
 
     @tool
     def view_code(self, file_path: str, line_start: int, line_end: int) -> str:
@@ -92,7 +92,7 @@ class CodeRetriever():
     @catch_exception
     def call_container_code_retriever(self, symbol_name: str, lsp_function: LSPFunction, retriver: Retriever) -> list[dict]:
 
-        compile_out_path = os.path.join(self.ossfuzz_dir, "build", "out", self.new_project_name)
+        compile_out_path = os.path.join(self.oss_fuzz_dir, "build", "out", self.new_project_name)
         os.makedirs(compile_out_path, exist_ok=True)
         compile_json_path = os.path.join(self.cache_dir,self.project_name,  "compile_commands.json")
         workdir = self.docker_tool.run_cmd(["pwd"], timeout=None, volumes=None).strip()

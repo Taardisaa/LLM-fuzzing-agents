@@ -266,6 +266,35 @@ def run_agent_res(output_dir):
                        'zip_fread', 'dns_name_fromtext', 'dns_message_parse', 'isc_lex_getmastertoken', 
                        'dns_rdata_fromwire', 'dns_name_fromwire', 'dns_master_loadbuffer', 'isc_lex_gettoken', 
                        'dns_message_checksig', 'dns_rdata_fromtext']
+    
+    kamailio_func = [
+	# CodeChecker 15
+	"get_src_address_socket",
+	"get_src_uri",
+	"parse_content_disposition",
+	"parse_diversion_header",
+	"parse_from_header",
+	"parse_from_uri",
+	"parse_headers",
+	"parse_identityinfo_header",
+	"parse_pai_header",
+	"parse_privacy",
+	"parse_record_route_headers",
+	"parse_refer_to_header",
+	"parse_route_headers",
+	"parse_to_header",
+	"parse_to_uri",
+    ]
+
+    file_func = ["igraph_edge_connectivity", # F
+	"stun_is_response",
+	"gdk_pixbuf_animation_new_from_file", # F
+	"gdk_pixbuf_new_from_file", # Y
+	"gdk_pixbuf_new_from_file_at_scale", # Y
+	"gf_isom_open_file",
+	"dwarf_init_path",
+	"ixmlLoadDocumentEx", #Y
+    ]
     # output_dir = os.path.join(PROJECT_PATH, "outputs_jan_6")
     res_count = defaultdict(int)
 
@@ -276,7 +305,7 @@ def run_agent_res(output_dir):
         # sort the directories
     dir_list.sort()
     harness_dict = {}
-    with open(os.path.join(output_dir, "issta_res.txt"), "w") as save_f:
+    with open(os.path.join(output_dir, "issta_res_new.txt"), "w") as save_f:
 
         for dir_name in dir_list:
             if not os.path.isdir(os.path.join(output_dir, dir_name)):
@@ -315,7 +344,7 @@ def run_agent_res(output_dir):
 
             if no_header_flag:
                 res_count["NoHeader"] += 1
-                save_f.write(f"Log dir: {log_prefix}. fuzz res: No Header\n")
+                # save_f.write(f"Log dir: {log_prefix}. fuzz res: No Header\n")
                 continue
         
             # count the no usage case
@@ -325,18 +354,32 @@ def run_agent_res(output_dir):
             if "Fuzz res:No Error" not in log_lines:
                 res_count["Fail"] += 1
                 # count the no usage case
-                if "Found 0 usage" in log_lines:
+                # if "Found 0 usage" in log_lines:
                     # res_count["NoUsage"] += 1
-                    save_f.write(f"Log dir: {log_prefix}. fuzz res: Failed, NoUsage\n")
-                else:
-                    save_f.write(f"Log dir: {log_prefix}. fuzz res: Failed, HaveUsage\n")
+                    # save_f.write(f"Log dir: {log_prefix}. fuzz res: Failed, NoUsage\n")
+                # else:
+                    # save_f.write(f"Log dir: {log_prefix}. fuzz res: Failed, HaveUsage\n")
                 continue
+            from pathlib import Path
+
+            if function_name in kamailio_func:
+                
+                flag = False
+                harness_code = Path(harness_path).read_text()
+                for line in harness_code.splitlines():
+                    if not line.strip().startswith('//'):
+                        if not line.strip().startswith('extern'):
+                            if 'parse_msg(' in line:
+                                flag = True
+                if not flag:
+                    save_f.write(f"Log dir: {log_prefix}. fuzz res: No call for parse msg\n")
+                    continue
 
             parser = CParser(file_path=harness_path, project_lang=LanguageType.C)
 
             if parser.exist_function_definition(function_name):
                 res_count["Fake"] += 1
-                save_f.write(f"Log dir: {log_prefix}. fuzz res: Fake Definition\n")
+                # save_f.write(f"Log dir: {log_prefix}. fuzz res: Fake Definition\n")
                 continue
             
             if parser.is_fuzz_function_called(function_name):
@@ -355,7 +398,7 @@ def run_agent_res(output_dir):
                 continue
             else:
                 res_count["Nocall"] += 1
-                save_f.write(f"Log dir: {log_prefix}. fuzz res: No call\n")
+                # save_f.write(f"Log dir: {log_prefix}. fuzz res: No call\n")
             
 
         save_f.write(f"Results count: {res_count}")
@@ -363,16 +406,16 @@ def run_agent_res(output_dir):
 
     print("remaining func:", removed_func)
 
-    pickle.dump(success_fsg, open(os.path.join(output_dir, "success_fsg.pkl"), "wb"))
-    pickle.dump(success_name, open(os.path.join(output_dir, "success_name.pkl"), "wb"))
+    # pickle.dump(success_fsg, open(os.path.join(output_dir, "success_fsg.pkl"), "wb"))
+    # pickle.dump(success_name, open(os.path.join(output_dir, "success_name.pkl"), "wb"))
     
     # dump json file
 
-    with open(os.path.join(output_dir, "harness.json"), "w") as f:
-        json.dump(harness_dict, f)
+    # with open(os.path.join(output_dir, "harness.json"), "w") as f:
+        # json.dump(harness_dict, f)
 
 
 if __name__ == "__main__":
 
-    run_agent_res("/home/yk/code/LLM-reasoning-agents/outputs/issta3")
+    run_agent_res("/home/yk/code/LLM-reasoning-agents/outputs/extend/issta3")
     # run_oss_fuzz_res()

@@ -26,7 +26,7 @@ import asyncio
 import json
 from tools.fuzz_tools.log_parser import CompileErrorExtractor
 from prompts.raw_prompts import CODE_FIX_PROMPT, EXTRACT_CODE_PROMPT, FUZZ_FIX_PROMPT, INIT_PROMPT
-from utils.misc import plot_graph, load_pormpt_template, save_code_to_file
+from utils.misc import plot_graph, load_pormpt_template, save_code_to_file, extract_name
 from tools.fuzz_tools.compiler import Compiler
 from tools.code_retriever import CodeRetriever, header_desc_mapping
 from tools.fuzz_tools.run_fuzzer import FuzzerRunner
@@ -60,8 +60,8 @@ class CodeFormatTool():
         # remove some useless string
         source_code = source_code.replace("```cpp", "")
         source_code = source_code.replace("```", "")
-        if source_code and  source_code.startswith("c"):
-            source_code = source_code[1:]
+        # if source_code and  source_code.startswith("c"):
+            # source_code = source_code[1:]
         return source_code
 
 class InitGenerator:
@@ -205,7 +205,7 @@ class CompilerWraper(Compiler):
 
                 if not self.is_link_error(error_msg, harness_path):
                     # save raw error message
-                    return {"messages": ("user", compile_res), "build_msg": error_msg, "fuzzer_name": fuzzer_name}
+                    return {"messages": ("user", compile_res), "build_msg": error_msg, "fuzzer_name": fuzzer_name, "fuzzer_path": harness_path}
                 else:
                     # link error, try next harness
                     self.logger.error(f"Link Error for draft_fix{fix_count} using {fuzzer_name}, Now try another harness file.")
@@ -215,7 +215,7 @@ class CompilerWraper(Compiler):
             else:
                 return {"messages": ("user", compile_res), "build_msg": all_msg, "fuzzer_name": fuzzer_name}
                 
-        return {"messages": ("user", END + "Link Error, tried all harness")}
+        return {"messages": ("user", END + "Link Error, tried all harness"), "fuzzer_path": harness_path}
 
 class FixerPromptBuilder:
     def __init__(self, compile_fix_prompt: str, fuzz_fix_prompt: str, project_lang: LanguageType, clear_msg_flag: bool):
@@ -360,6 +360,7 @@ class FuzzState(TypedDict):
     fuzz_msg: str
     fix_counter: int
     fuzzer_name: str
+    fuzzer_path: str
 
 
 class AgentFuzzer():
@@ -373,14 +374,14 @@ class AgentFuzzer():
     FuzzerNode = "Fuzzer"
     FixBuilderNode = "FixBuilder"
 
-    def __init__(self, model_name: str, ossfuzz_dir: str, project_name: str, function_signature: str,
+    def __init__(self, model_name: str, oss_fuzz_dir: str, project_name: str, function_signature: str,
                  usage_token_limit: int, run_time: int, max_fix: int, max_tool_call: int,  
                  clear_msg_flag: bool, save_dir: str, cache_dir: str):
         
         self.eailier_stop_flag = False
 
         self.model_name = model_name
-        self.ossfuzz_dir = ossfuzz_dir
+        self.oss_fuzz_dir = oss_fuzz_dir
         self.project_name = project_name
         self.function_signature = function_signature
         self.usage_token_limit = usage_token_limit
@@ -392,14 +393,14 @@ class AgentFuzzer():
 
         # random generate a string for new project name
         random_str = ''.join(random.choices("abcdefghijklmnopqrstuvwxyz", k=16))
-        self.new_project_name = "{}_{}".format(project_name, random_str)
+        self.new_project_name = f"{project_name}_{extract_name(self.function_signature)}_{random_str}"
         self.save_dir = os.path.join(save_dir, self.new_project_name)
         self.logger = self.setup_logging()
 
-        self.oss_tool = OSSFuzzUtils(self.ossfuzz_dir, self.project_name, self.new_project_name)
+        self.oss_tool = OSSFuzzUtils(self.oss_fuzz_dir, self.project_name, self.new_project_name)
         self.project_lang = self.oss_tool.get_project_language()
 
-        self.docker_tool = DockerUtils(self.ossfuzz_dir, self.project_name, self.new_project_name, self.project_lang)
+        self.docker_tool = DockerUtils(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang)
         init_flag = self.init_workspace()
 
         if not init_flag:
@@ -452,7 +453,7 @@ class AgentFuzzer():
     def init_workspace(self):
         '''Initialize the workspace'''
 
-        dst_path = os.path.join(self.ossfuzz_dir, "projects", self.new_project_name)
+        dst_path = os.path.join(self.oss_fuzz_dir, "projects", self.new_project_name)
         if os.path.exists(dst_path):
             # clean the directory
             shutil.rmtree(dst_path)
@@ -462,7 +463,7 @@ class AgentFuzzer():
         # os.makedirs(os.path.join(self.save_dir, "fuzz_log"))
        
         # copy a backup of the project
-        scr_path = os.path.join(self.ossfuzz_dir, "projects", self.project_name)
+        scr_path = os.path.join(self.oss_fuzz_dir, "projects", self.project_name)
         shutil.copytree(scr_path, dst_path, dirs_exist_ok=True)
 
         # copy lsp related files to the project directory
@@ -507,7 +508,7 @@ class AgentFuzzer():
     def modify_dockerfile(self):
         '''Copy the harness file to overwrite all existing harness files'''
         # write copy in dockerfile and re-build the image
-        project_path = os.path.join(self.ossfuzz_dir,  "projects", self.new_project_name)
+        project_path = os.path.join(self.oss_fuzz_dir,  "projects", self.new_project_name)
         with open(os.path.join(project_path, 'Dockerfile'), 'a') as f:
             # Add additional statement in dockerfile to overwrite with generated fuzzer
             f.write(f'\nCOPY *.py  .\n')
@@ -658,10 +659,10 @@ class AgentFuzzer():
             self.docker_tool.remove_image()
             self.logger.info("remove the docker image for {}".format(self.new_project_name))
             # remove the project directory
-            shutil.rmtree(os.path.join(self.ossfuzz_dir, "projects", self.new_project_name))
+            shutil.rmtree(os.path.join(self.oss_fuzz_dir, "projects", self.new_project_name))
 
             # clean the build directory
-            shutil.rmtree(os.path.join(self.ossfuzz_dir, "build", "out", self.new_project_name))
+            shutil.rmtree(os.path.join(self.oss_fuzz_dir, "build", "out", self.new_project_name))
 
             # remove the corpus, needs root permission
             # corpus_dir = os.path.join(self.save_dir, "corpora")
@@ -719,7 +720,7 @@ class AgentFuzzer():
     def build_graph(self):
 
         llm = ChatOpenAI(model=self.model_name)
-        code_retriever = CodeRetriever(self.ossfuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.cache_dir, self.logger)
+        code_retriever = CodeRetriever(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.cache_dir, self.logger)
        
         # decide whether to use the tool according to the header_desc_mode    
         tools = []
@@ -752,10 +753,10 @@ class AgentFuzzer():
         code_fixer = CodeFixer(llm_code_fixer, self.max_fix, self.max_tool_call,  self.save_dir, self.cache_dir,
                                  code_callback=code_formater.extract_code, logger=self.logger)
 
-        fuzzer = FuzzerWraper(self.ossfuzz_dir, self.new_project_name, self.project_lang, 
+        fuzzer = FuzzerWraper(self.oss_fuzz_dir, self.new_project_name, self.project_lang, 
                              self.run_time,  self.save_dir,  self.logger)
         
-        compiler = CompilerWraper(self.ossfuzz_dir, self.project_name, self.new_project_name, 
+        compiler = CompilerWraper(self.oss_fuzz_dir, self.project_name, self.new_project_name, 
                                   self.project_lang, self.harness_pairs, self.save_dir, self.logger)
 
         # build the graph
@@ -887,20 +888,20 @@ if __name__ == "__main__":
     
     # build graph
     OSS_FUZZ_DIR = "/home/yk/code/oss-fuzz/"
-    PROJECT_NAME = "tinyxml2"
+    PROJECT_NAME = "kamailio"
 
     # absolute path
     SAVE_DIR = "/home/yk/code/LLM-reasoning-agents/outputs/"
     CACHE_DIR = "/home/yk/code/LLM-reasoning-agents/cache/"
-    llm_name = "gpt-4o-mini"
-    function_name = r"void tinyxml2::XMLElement::SetAttribute(const char *, const char *)"
+    llm_name = "gpt-4-0613"
+    # function_name = r"void tinyxml2::XMLElement::SetAttribute(const char *, const char *)"
     # function_name = r"OPJ_BOOL opj_jp2_get_tile(opj_jp2_t *, opj_stream_private_t *, opj_image_t *, opj_event_mgr_t *, OPJ_UINT32"
     # function_name = r"XMLError XMLDocument::LoadFile( const char* filename )"
     # function_name = "cJSON * cJSON_Parse(const char *)"
     # function_name = "void ares_gethostbyaddr(ares_channel_t *, const void *, int, int, ares_host_callback, void *)"
     # function_name = "void (anonymous namespace)::_RealWebSocket::operator()(struct CallbackAdapter *, const vector<unsigned char, std::__1::allocator<unsigned char> > &)"
     # function_name = "bool cpuinfo_linux_get_processor_core_id(uint32_t, DW_TAG_restrict_typeuint32_t *)"
-
+    function_name = "int get_src_uri(sip_msg_t *, int, str *)"
     # model_name: str, ossfuzz_dir: str, project_name: str, function_signature: str,
                 #  usage_token_limit: int, run_time: int, max_fix: int, max_tool_call: int,  clear_msg_flag: bool,
                 #  save_dir: str, cache_dir: str)

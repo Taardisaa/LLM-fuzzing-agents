@@ -23,6 +23,8 @@ class Compiler():
         # self.harness_path = os.path.join(self.oss_fuzz_dir, "projects", self.new_project_name, os.path.basename(self.harness_path))
 
         self.build_harness_cmd = self.oss_tool.get_script_cmd("build_fuzzers")
+        # self.build_harness_cmd = ["python", os.path.join(self.oss_fuzz_dir, "infra", "helper.py"),
+                            # "build_fuzzers", "--clean", self.new_project_name,  "--", "-fsanitize=fuzzer", "-fsanitize=address", "-fsanitize-coverage=trace-pc-guard"]
         self.build_image_cmd =  self.oss_tool.get_script_cmd("build_image")
 
     def write_dockerfile(self, harness_path: str):

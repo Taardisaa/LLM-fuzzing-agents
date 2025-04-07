@@ -94,7 +94,7 @@ class DockerUtils:
         except Exception as e:
             return f"{DockerResults.Error}: {e}"
       
-    def run_cmd(self, cmd_list: list[str], timeout: int = None, volumes: dict = None) -> str:
+    def run_cmd(self, cmd_list: list[str], timeout: int = None, **kargs) -> str:
 
         client = docker.from_env()
         try:
@@ -103,9 +103,9 @@ class DockerUtils:
                 command=cmd_list,  # Simulating a long-running process
                 detach=True,
                 tty=True, 
-                volumes=volumes,
                 privileged=True,  # Enables privileged mode
                 environment={"FUZZING_LANGUAGE": self.project_lang},  # Set the environment variable
+                **kargs
             )
 
             # Wait for the container to exit, with a timeout

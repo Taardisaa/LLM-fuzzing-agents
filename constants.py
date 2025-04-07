@@ -73,4 +73,5 @@ FuzzEntryFunctionMapping = {
     LanguageType.JAVA: "fuzzerTestOneInput",
 }
 
+COV_WRAP_FILE_NAME = "cov_wrap_code"
 # # Pydantic

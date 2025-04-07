@@ -1,0 +1,49 @@
+extern uint8_t __start___sancov_cntrs;
+extern uint8_t __stop___sancov_cntrs;
+
+void reset_sancov_counters() {
+    uint8_t *start = &__start___sancov_cntrs;
+    uint8_t *stop = &__stop___sancov_cntrs;
+    
+    // Calculate the size (in bytes) of the region
+    size_t size = stop - start;
+    
+    // Zero out the entire region
+    memset(start, 0, size);
+}
+
+
+void save_sancov_counters() {
+    // --- (1) Calculate size and print it ---
+    uint8_t *start = &__start___sancov_cntrs;
+    uint8_t *stop = &__stop___sancov_cntrs;
+    size_t size = stop - start;
+
+    // --- (2) Ensure /out/bitmaps/ directory exists ---
+    if (access("./bitmaps", F_OK) != 0) {  // Check if dir exists
+       // mkdir("/out", 0755);                  // Create /out (rwxr-xr-x)
+        mkdir("./bitmaps", 0755);          // Create /out/bitmaps
+    }
+
+    // --- (3) Generate a random filename (8 hex digits) ---
+    char filename[64];
+    srand(time(NULL));  // Seed rand() once (optional but improves randomness)
+    
+    snprintf(
+        filename, 
+        sizeof(filename), 
+        "./bitmaps/%lx_%04x.bin",  // Format: timestamp_rand.bin
+        (unsigned long)time(NULL), // Timestamp (seconds since epoch)
+        rand() & 0xFFFF            // Random 16-bit value
+    );
+    
+    // --- (4) Write data to file ---
+    FILE *file = fopen(filename, "wb");
+    if (!file) {
+        perror("Failed to open file");
+        return;
+    }
+
+    size_t written = fwrite(start, 1, size, file);
+    fclose(file);
+}

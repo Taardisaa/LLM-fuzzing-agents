@@ -9,30 +9,23 @@ import os
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph, START
 import random
-from constants import LanguageType, CompileResults, PROJECT_PATH, ToolDescMode, FuzzEntryFunctionMapping, LSPResults, Retriever
-from pydantic import BaseModel, Field
-import logging
-import shutil
+from constants import LanguageType, CompileResults, PROJECT_PATH, ToolDescMode, FuzzEntryFunctionMapping, LSPResults, Retriever, FuzzResult
 from langchain_core.tools import tool, BaseTool, StructuredTool
 from langgraph.prebuilt import ToolNode
 from langchain_anthropic import ChatAnthropic
-from multiprocessing import Pool, Lock, Manager
 import yaml
-import atexit
-import asyncio
-from prompts.raw_prompts import CODE_FIX_PROMPT, EXTRACT_CODE_PROMPT, CODE_FIX_PROMPT_TOOLS
-from utils.misc import plot_graph, load_pormpt_template, save_code_to_file
+from prompts.raw_prompts import CODE_FIX_PROMPT, EXTRACT_CODE_PROMPT
+from utils.misc import plot_graph, load_pormpt_template, save_code_to_file, filter_examples, extract_name
 from tools.code_retriever import CodeRetriever, header_desc_mapping
-from tools.code_search import CodeSearch
-from agents.reflexion_agent import CodeFormatTool, InitGenerator, FuzzerWraper, CompilerWraper, CodeFixer, AgentFuzzer, FuzzState, CodeAnswerStruct, FixerPromptBuilder
+from agents.reflexion_agent import CodeFormatTool, InitGenerator, FuzzerWraper, CompilerWraper, CodeFixer, AgentFuzzer, FuzzState, CodeAnswerStruct
 import io
 import contextlib
-import atexit
 import signal
 import sys
-from tools.fuzzlog_parser import run_agent_res
-
-
+from tools.results_analysis import run_agent_res
+from multiprocessing import Pool
+import logging
+from semantic_check import SemaCheck
 ISSTA_C_PROMPT = '''
 // The following is a fuzz driver written in C language, complete the implementation. Output the continued code in reply only.
 
@@ -112,10 +105,117 @@ Based on the above information, fix the code. Must provide the full fixed code.
 
 '''
 
+
+
+class FixerPromptBuilder:
+    def __init__(self, oss_fuzz_dir: str,  project_name: str, new_project_name: str, cache_dir: str , usage_token_limit: int, logger: logging.Logger,
+                 compile_fix_prompt: str, fuzz_fix_prompt: str, project_lang: LanguageType, clear_msg_flag: bool):
+        
+        self.oss_fuzz_dir = oss_fuzz_dir
+        self.new_project_name = new_project_name
+        self.project_name = project_name
+        self.cache_dir = cache_dir
+        self.logger = logger
+        self.usage_token_limit = usage_token_limit
+
+        self.compile_fix_prompt = compile_fix_prompt
+        self.fuzz_fix_prompt = fuzz_fix_prompt
+        self.project_lang = project_lang
+        self.clear_msg_flag = clear_msg_flag
+
+    def build_compile_prompt(self, harness_code, error_msg):
+        '''
+        Build the prompt for the code fixer. If you need to customize the prompt, you can override this function.
+        '''
+        return self.compile_fix_prompt.format(harness_code=harness_code, error_msg=error_msg, project_lang=self.project_lang)
+
+    def build_fuzz_prompt(self, harness_code, error_msg):
+        '''
+        Build the prompt for the code fixer. If you need to customize the prompt, you can override this function.
+        '''
+        # extract 
+        #1 0x5639df576b54 in ixmlDocument_createAttributeEx /src/pupnp/ixml/src/document.c:269:26
+        reversed_stack = error_msg.split("\n")[::-1]
+        index = None
+        for i, line in enumerate(reversed_stack):
+            if not line.strip().startswith("#"):
+                continue
+            # find the first api of the project in stack trace
+            if "LLVMFuzzerTestOneInput" in line:
+                index = i
+                break
+        
+        if index and index+1 < len(reversed_stack):
+            crash_line = reversed_stack[index+1]
+
+            row_data = crash_line.strip().split(" ")
+
+            # 5 for C
+            if len(row_data) != 5:
+                self.logger.info(f"Error message format is not correct: {line}")
+            else:
+                _, _, _, func_name, file_path = row_data
+                
+                retriever = CodeRetriever(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.cache_dir , self.logger)
+                usages = retriever.get_symbol_references(func_name, Retriever.Parser)
+                # filter the usage including the Function entry
+                example = filter_examples(usages, self.project_lang, self.usage_token_limit)
+               
+                # comment the example
+                example = "// ".join(example.splitlines())
+                example = "// " + example
+                # TODO 
+                if example != "":
+                    error_msg += f"\n // the usage of {func_name} is as follows: \n" + example
+
+        return self.fuzz_fix_prompt.format(harness_code=harness_code, error_msg=error_msg, project_lang=self.project_lang)
+
+    def respond(self, state: dict):
+        fix_counter = state.get("fix_counter", 0)
+        last_message = state["messages"][-1].content
+        if fix_counter == 0 or self.clear_msg_flag:
+            # clear previous messages, need to build the fix prompt based on the provided template 
+            state["messages"].clear()
+            if last_message.startswith(CompileResults.CodeError):
+                fix_prompt = self.build_compile_prompt(state["harness_code"], state["build_msg"])
+            else:
+                fix_prompt = self.build_fuzz_prompt(state["harness_code"], state["fuzz_msg"])
+        else:
+            # keep the previous messages, just add the error message
+            if last_message.startswith(CompileResults.CodeError):
+                fix_prompt = "Complie Error Messages:\n" + state["build_msg"]
+            else:
+                fix_prompt = "Fuzz Error Messages:\n" + state["fuzz_msg"]
+
+        return {"messages": ("user", fix_prompt)}
+
+class SemaCheckNode:
+    def __init__(self, oss_fuzz_dir: str, project_name: str, new_project_name: str, function_signature: str, 
+                 logger: logging.Logger):
+        self.oss_fuzz_dir = oss_fuzz_dir
+        self.project_name = project_name
+        self.new_project_name = new_project_name
+        self.func_name = extract_name(function_signature)
+        self.logger = logger
+        self.checker = SemaCheck(oss_fuzz_dir, project_name, new_project_name, self.func_name)
+
+    def check(self, state: dict):
+        # run semantic check
+        flag = self.checker.check(state["harness_code"], state["harness_path"], state["fuzzer_name"])
+        if flag:
+            self.logger.info("Semantic check passed")
+            return{"messages": ("user", END + "Semantic check passed")}
+        else:
+            self.logger.info("Semantic check failed")
+            msg = "The harness code is grammly correct, but it could not pass the semantic check. The reason is the harness code does not correctly fuzz the function." \
+            " Maybe the harness code didn't correctly feed the fuzze data to correct position (like file or buffer)." 
+            return{"messages": ("user", "Semantic check failed"), "fuzz_msg": msg}
+
 class ISSTAFuzzer(AgentFuzzer):
-    def __init__(self, model_name: str, ossfuzz_dir: str, project_name: str, function_signature: str, usage_token_limit: int,
+    SemanticCheckNode = "SemanticCheckNode"
+    def __init__(self, model_name: str, oss_fuzz_dir: str, project_name: str, function_signature: str, usage_token_limit: int,
                  run_time: int, max_fix: int, max_tool_call: int, clear_msg_flag:bool, save_dir: str, cache_dir: str):
-        super().__init__(model_name, ossfuzz_dir, project_name, function_signature, usage_token_limit, run_time, 
+        super().__init__(model_name, oss_fuzz_dir, project_name, function_signature, usage_token_limit, run_time, 
                         max_fix, max_tool_call, clear_msg_flag,  save_dir, cache_dir)
 
 
@@ -141,7 +241,7 @@ class ISSTAFuzzer(AgentFuzzer):
             function_name = function_name.replace("*", "")
 
         # {header_files}
-        retriever = CodeRetriever(self.ossfuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.cache_dir , self.logger)
+        retriever = CodeRetriever(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.cache_dir , self.logger)
         
         #TODO only include function header may not be enough
         header = retriever.get_symbol_header(function_name)
@@ -174,7 +274,7 @@ class ISSTAFuzzer(AgentFuzzer):
         else:
             # randomly select one usage
             random_index = random.randint(0, len(filter_code_usage) - 1)
-            # random_index = 8
+            # random_index = 16
             function_usage = filter_code_usage[random_index]["source_code"]
 
             #  add comment for function usage
@@ -183,41 +283,56 @@ class ISSTAFuzzer(AgentFuzzer):
                 comment_function_usage.append(f"// {line}")
             function_usage = "\n".join(comment_function_usage)
             self.logger.info(f"Using {random_index}th usage in the project.")
-            
+        
         # TODO, no code from public do we need the namespace?
         # code_search = CodeSearch(function_name, self.new_project_name)
 
         # TODO, no document
         # {function_document}
         function_document = ""
-
         # {function_signature}
         # function_signature = self.function_signature
         retrieved_signature = retriever.get_symbol_declaration(function_name)
         if len(retrieved_signature) == 0:
             self.logger.warning(f"Can not retrieve signature for {function_name}, use the provided signature from xml")
-            function_signature = self.function_signature
-
         elif len(retrieved_signature) > 1:
             self.logger.warning(f"Multiple signature found for {function_name}, use the provided signature from xml")
-            function_signature = self.function_signature
         else:
             function_signature = retrieved_signature[0]["source_code"]
             if function_signature.replace(" ", "").replace("\n", "").replace("\t", "") != self.function_signature.replace(" ", "").replace("\n", "").replace("\t", "")+";":
                 self.logger.error(f"Retrieved signature is different from the provided one: {function_signature} vs {self.function_signature}")
 
         prompt_template = prompt_template.format(header_files=header, function_usage=function_usage, function_document=function_document,
-                                             function_signature=function_signature, function_name=function_name)
+                                             function_signature=self.function_signature, function_name=function_name)
         prompt_template += "{\n"
         save_code_to_file(prompt_template, os.path.join(self.save_dir, "prompt.txt"))
 
         return prompt_template
 
+
+    def fuzzer_router_mapping(self, state):
+        last_message = state["messages"][-1]
+
+        # print(messages)
+        if last_message.content.startswith(FuzzResult.NoError):
+            return self.SemanticCheckNode
+        elif last_message.content.startswith(END):
+            return END
+        else:
+            return self.FixBuilderNode
+        
+    def semantic_check_router_mapping(self, state):
+        last_message = state["messages"][-1]
+
+        if last_message.content.startswith(END):
+            return END
+        else:
+            return self.FixBuilderNode
     def build_graph(self):
 
         llm = ChatOpenAI(model=self.model_name, temperature=0.7)
 
-        code_retriever = CodeRetriever(self.ossfuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.cache_dir, self.logger)
+        code_retriever = CodeRetriever(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.cache_dir, self.logger)
         tools = []
         header_tool = StructuredTool.from_function(
                 func=code_retriever.get_symbol_header,
@@ -240,16 +355,17 @@ class ISSTAFuzzer(AgentFuzzer):
                 # clear_msg_flag: bool, save_dir: str, cache_dir: str, code_callback=None , logger=None)
         
         #  compile_fix_prompt: str, fuzz_fix_prompt: str, clear_msg_flag: bool)
-        fix_builder = FixerPromptBuilder(compile_fix_prompt, fuzz_fix_prompt,self.project_lang, self.clear_msg_flag)
+        fix_builder = FixerPromptBuilder(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.cache_dir, self.usage_token_limit, self.logger,
+                                        compile_fix_prompt, fuzz_fix_prompt, self.project_lang, clear_msg_flag=self.clear_msg_flag)
 
         code_fixer = CodeFixer(fixer_llm, self.max_fix, self.max_tool_call,  self.save_dir, self.cache_dir,
                                  code_callback=code_formater.extract_code, logger=self.logger)
 
-        fuzzer = FuzzerWraper(self.ossfuzz_dir, self.new_project_name, self.project_lang, 
+        fuzzer = FuzzerWraper(self.oss_fuzz_dir, self.new_project_name, self.project_lang, 
                              self.run_time,  self.save_dir,  self.logger)
         
-        compiler = CompilerWraper(self.ossfuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.harness_pairs, self.save_dir, self.logger)
-
+        compiler = CompilerWraper(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.harness_pairs, self.save_dir, self.logger)
+        checker = SemaCheckNode(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.function_signature, self.logger)
 
         # build the graph
         builder = StateGraph(FuzzState)
@@ -262,6 +378,7 @@ class ISSTAFuzzer(AgentFuzzer):
         builder.add_node(self.CodeFixerNode, code_fixer.respond)
         builder.add_node(self.FixerToolNode, tool_node)
         builder.add_node(self.FuzzerNode, fuzzer.run_fuzzing)
+        builder.add_node(self.SemanticCheckNode, checker.check)
 
         # add edges
         builder.add_edge(START, self.HarnessGeneratorNode)
@@ -272,7 +389,8 @@ class ISSTAFuzzer(AgentFuzzer):
         # add conditional edges
         builder.add_conditional_edges(self.CompilerNode, self.compile_router_mapping,  [self.FixBuilderNode, self.FuzzerNode, END])
         builder.add_conditional_edges(self.CodeFixerNode, self.code_fixer_mapping,  [self.CompilerNode, self.FixerToolNode, END])
-        builder.add_conditional_edges(self.FuzzerNode, self.fuzzer_router_mapping, [self.FixBuilderNode, END])
+        builder.add_conditional_edges(self.FuzzerNode, self.fuzzer_router_mapping, [self.FixBuilderNode,  self.SemanticCheckNode, END])
+        builder.add_conditional_edges(self.SemanticCheckNode, self.semantic_check_router_mapping, [self.FixBuilderNode, END])
 
         # the path map is mandatory
         graph = builder.compile()
@@ -315,11 +433,11 @@ class ISSTAFuzzer(AgentFuzzer):
                 f.flush()
 
 
-def process_project(llm_name, ossfuzz_dir, project_name, function_signature, usage_token_limit, run_time, max_fix, max_tool_call, save_dir, cache_dir):
+def process_project(llm_name, oss_fuzz_dir, project_name, function_signature, usage_token_limit, run_time, max_fix, max_tool_call, save_dir, cache_dir):
 
 
     try:
-        agent_fuzzer = ISSTAFuzzer(llm_name, ossfuzz_dir, project_name, function_signature, usage_token_limit=usage_token_limit, run_time=run_time, max_fix=max_fix,
+        agent_fuzzer = ISSTAFuzzer(llm_name, oss_fuzz_dir, project_name, function_signature, usage_token_limit=usage_token_limit, run_time=run_time, max_fix=max_fix,
                                     max_tool_call=max_tool_call, clear_msg_flag=True, save_dir=save_dir, cache_dir=cache_dir)
         # Your main logic here
         graph = agent_fuzzer.build_graph()
@@ -350,11 +468,11 @@ def get_all_successful_func(save_dir, iteration):
 
 def run_parallel(iteration=1):
     # build graph
-    ossfuzz_dir = "/home/yk/code/oss-fuzz/"
+    oss_fuzz_dir = "/home/yk/code/oss-fuzz/"
     # absolute path
     save_dir = os.path.join(PROJECT_PATH, "outputs")
-    cur_save_dir = os.path.join(save_dir, f"issta{iteration}")
-
+    cur_save_dir = os.path.join(save_dir,"extend", f"issta{iteration}")
+    # cur_save_dir = os.path.join(save_dir, f"issta{iteration}")
     cache_dir = "/home/yk/code/LLM-reasoning-agents/cache/"
     llm_name = "gpt-4-0613"
     run_time=0.5
@@ -363,7 +481,7 @@ def run_parallel(iteration=1):
     usage_token_limit = 1000
     function_dict = {}
 
-    all_success_sig = get_all_successful_func(save_dir, iteration)
+    # all_success_sig = get_all_successful_func(save_dir, iteration)
     # read benchmark names
     bench_dir = os.path.join(PROJECT_PATH, "benchmark-sets", "ntu")
     all_files = os.listdir(bench_dir)
@@ -394,8 +512,8 @@ def run_parallel(iteration=1):
             for function in data.get("functions"):
                 function_signature = function["signature"].replace("\n", "")
                 
-                if function_signature in all_success_sig:
-                    continue
+                # if function_signature in all_success_sig:
+                    # continue
                 
                 total += 1
                 function_list.append(function_signature)
@@ -416,47 +534,66 @@ def run_parallel(iteration=1):
                 function_signature = function_dict[key][i]
                 project_name = key
                 print(f"{i} of functions in {key}: {len(function_dict[key])}")
-                # llm_name, ossfuzz_dir, project_name, function_signature, run_time, max_fix, max_tool_call, save_dir, cache_dir
-                # pool.apply(process_project, args=(llm_name, ossfuzz_dir, project_name, function_signature, usage_token_limit, run_time, max_fix, max_tool_call,  cur_save_dir, cache_dir))
-                pool.apply_async(process_project, args=(llm_name, ossfuzz_dir, project_name, function_signature, usage_token_limit, run_time, max_fix, max_tool_call,  cur_save_dir, cache_dir))
+                # llm_name, oss_fuzz_dir, project_name, function_signature, run_time, max_fix, max_tool_call, save_dir, cache_dir
+                # pool.apply(process_project, args=(llm_name, oss_fuzz_dir, project_name, function_signature, usage_token_limit, run_time, max_fix, max_tool_call,  cur_save_dir, cache_dir))
+                pool.apply_async(process_project, args=(llm_name, oss_fuzz_dir, project_name, function_signature, usage_token_limit, run_time, max_fix, max_tool_call,  cur_save_dir, cache_dir))
 
         pool.close()
         pool.join()
 
-    run_agent_res(cur_save_dir)
+    # run_agent_res(cur_save_dir)
 
 
 def run_single():
       # build graph
     OSS_FUZZ_DIR = "/home/yk/code/oss-fuzz/"
-    PROJECT_NAME = "libbpf"
+    PROJECT_NAME = "igraph"
 
     # absolute path
-    SAVE_DIR = "/home/yk/code/LLM-reasoning-agents/outputs/"
     CACHE_DIR = "/home/yk/code/LLM-reasoning-agents/cache/"
     # llm_name = "gpt-4o-mini"
     llm_name = "gpt-4-0613"
-    function_signature = r"struct bpf_object * bpf_object__open_mem(const void *obj_buf, size_t obj_buf_sz, const struct bpf_object_open_opts *opts)"
-    # function_signature = r"int onig_new(regex_t **, const OnigUChar *, const OnigUChar *, OnigOptionType, OnigEncoding, OnigSyntaxType *, OnigErrorInfo *)"
+    # function_signature =
+    # func_list = [
+    #     "int parse_content_disposition(struct sip_msg *)",
+    #     "int parse_diversion_header(struct sip_msg *)",
+    #     "int parse_headers(struct sip_msg *const msg, const hdr_flags_t flags, const int next)",
+    #     "int parse_identityinfo_header(struct sip_msg *)",
+    #     "int parse_to_header(const struct sip_msg *)",
+    #     "sip_uri_t * parse_to_uri(const sip_msg_t *)"
+    # ]
+    # func_list = [
+        # "int parse_record_route_headers(sip_msg_t *)",
+        # "int parse_route_headers(sip_msg_t *)",
+        # "int get_src_uri(sip_msg_t *, int, str *)",
+        # "int parse_pai_header(const struct sip_msg *)",
+    # ]
+    func_list = ["igraph_error_t igraph_read_graph_edgelist(igraph_t *, FILE *, igraph_integer_t, igraph_bool_t)"]
+    # func_list = ["GdkPixbufAnimation* gdk_pixbuf_animation_new_from_file(const char         *filename, GError  **error)"]
 
-    agent_fuzzer = ISSTAFuzzer(llm_name, OSS_FUZZ_DIR, PROJECT_NAME, function_signature, usage_token_limit = 1000,  run_time=0.5, max_fix=5,
-                                max_tool_call=10, clear_msg_flag=True, save_dir=SAVE_DIR, cache_dir=CACHE_DIR)
-   
-    def signal_handler(sig, frame):
-        print(f"Received signal {sig}, cleaning up...")
-        agent_fuzzer.clean_workspace()
-        sys.exit(0)
+    for function_signature in func_list:
+        for i in range(1,4):
+            SAVE_DIR = f"/home/yk/code/LLM-reasoning-agents/outputs/extend/issta{i}/"
+            # function_signature = r"int onig_new(regex_t **, const OnigUChar *, const OnigUChar *, OnigOptionType, OnigEncoding, OnigSyntaxType *, OnigErrorInfo *)"
 
-    # Register the signal handler for SIGINT (Ctrl+C) and SIGTERM
-    signal.signal(signal.SIGINT, signal_handler)
+            agent_fuzzer = ISSTAFuzzer(llm_name, OSS_FUZZ_DIR, PROJECT_NAME, function_signature, usage_token_limit = 1000,  run_time=0.5, max_fix=5,
+                                        max_tool_call=10, clear_msg_flag=True, save_dir=SAVE_DIR, cache_dir=CACHE_DIR)
+        
+            def signal_handler(sig, frame):
+                print(f"Received signal {sig}, cleaning up...")
+                agent_fuzzer.clean_workspace()
+                sys.exit(0)
 
-    try:
-        graph = agent_fuzzer.build_graph()
-        agent_fuzzer.run_graph(graph)
-    except Exception as e:
-        print(f"An exception occurred: {e}")
-    finally:
-        agent_fuzzer.clean_workspace()
+            # Register the signal handler for SIGINT (Ctrl+C) and SIGTERM
+            signal.signal(signal.SIGINT, signal_handler)
+
+            try:
+                graph = agent_fuzzer.build_graph()
+                agent_fuzzer.run_graph(graph)
+            except Exception as e:
+                print(f"An exception occurred: {e}")
+            finally:
+                agent_fuzzer.clean_workspace()
 
 if __name__ == "__main__":
 

@@ -156,8 +156,6 @@ class FuzzLogParser():
         return FuzzResult.NoError, None, None
 
 
-
-
 if __name__ == "__main__":
     log_file = "/home/yk/code/LLM-reasoning-agents/outputs/issta1/igraph_vydpfqhpudatcelq/fuzzing5.log"  # Replace with your log file path
     # with open(log_file, "r") as file:

@@ -10,10 +10,50 @@ import docker
 import yaml
 import subprocess as sp
 from collections import defaultdict
-from constants import PROJECT_PATH
+from constants import PROJECT_PATH, FuzzEntryFunctionMapping
 from langgraph.graph import StateGraph
 import re
-import logging  
+import random
+
+def filter_examples(project_code_usage, project_lang, usage_token_limit):
+    filter_code_usage = []
+    for code in project_code_usage:
+        if FuzzEntryFunctionMapping[project_lang] in code["source_code"]:
+            continue
+        # token limit
+        if len(code["source_code"].split()) > usage_token_limit:
+            continue
+        filter_code_usage.append(code)
+
+    if len(filter_code_usage) == 0:
+        function_usage = ""
+    else:
+        # randomly select one usage
+        random_index = random.randint(0, len(filter_code_usage) - 1)
+        function_usage = filter_code_usage[random_index]["source_code"]
+    
+    return function_usage
+
+
+def extract_name(function_signature):
+    # Remove the parameters by splitting at the first '('
+    function_name = function_signature.split('(')[0]
+    # Split the function signature into tokens to isolate the function name
+    tokens = function_name.strip().split()
+    assert len(tokens) > 0
+
+    # The function name is the last token, this may include namespaces ::
+    function_name = tokens[-1]
+
+    # split the function name by ::
+    function_name = function_name.split("::")[-1]
+
+    # remove * from the function name
+    if "*" in function_name:
+        function_name = function_name.replace("*", "")
+
+    return function_name
+
 
 def save_code_to_file(code: str, file_path: str) -> None:
     '''Save the code to the file'''
