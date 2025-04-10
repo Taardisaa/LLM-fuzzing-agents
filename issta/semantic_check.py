@@ -436,20 +436,21 @@ from utils.misc import extract_name
 
 
 class SemaCheck():
-    def __init__(self, oss_fuzz_dir, project_name, new_project_name, func_name):
+    def __init__(self, oss_fuzz_dir, project_name, new_project_name, func_name, project_lang):
         self.oss_fuzz_dir = oss_fuzz_dir
         self.project_name = project_name
         self.new_project_name = new_project_name
         self.func_name = func_name
-
-    def check(self, harness_code,  project_harness_path, project_fuzzer_name):
+        self.docker_tool = DockerUtils(oss_fuzz_dir, project_name, new_project_name, project_lang)
+        
+    def check(self, harness_code,  fuzzer_path, fuzzer_name):
         
         if self.func_name in checker_list.keys():
 
             def dotestfunc(testcase):
 
                 # sh -c for shell command
-                cmd = ["sh", "-c", f"echo -n {testcase} > testcase && ./{self.project_fuzzer_name} testcase -runs=1"]
+                cmd = ["sh", "-c", f"echo -n {testcase} > testcase && ./{fuzzer_name} testcase -runs=1"]
 
                 compile_out_path = os.path.join(self.oss_fuzz_dir, "build", "out", self.new_project_name)
                 volumes={compile_out_path: {"bind": "/out", "mode": "rw"}}
@@ -462,7 +463,7 @@ class SemaCheck():
             # init the compiler
             compiler = Compiler(self.oss_fuzz_dir, self.project_name, self.new_project_name)
             # compile the code
-            compile_res, build_msg = compiler.compile(wrapped_code, project_harness_path, project_fuzzer_name)
+            compile_res, build_msg = compiler.compile(wrapped_code, fuzzer_path, fuzzer_name)
             if compile_res != CompileResults.Success:
                 print(f"Compile error: {build_msg}")
                 return False

@@ -92,27 +92,19 @@ class BaseParser:
 
         # find the upper node of the callee node, which is reference node
         
-    def get_fuzz_entry_pos(self) -> int:
-        entry_function = FuzzEntryFunctionMapping[self.project_lang]
-        entry_node = self.find_definition_node(entry_function)
-        if not entry_node:
-            print("Entry function not found.")
-            return -1, -1, -1, -1
-        return entry_node.start_point.row, entry_node.start_point.column, entry_node.end_point.row, entry_node.end_point.column
-
-    def get_fuzz_function_pos(self, function_name: str) -> int:
+    def get_fuzz_function_pos(self, function_name: str):
         """
         Get the position of a function in the source code.
         :param function_name: The name of the function to find.
         :return: The position of the function in the source code.
         """
-
+        # TODO this only works for call fuzz function directly in the entry function
         # Fist find the Fuzz entry point
         entry_function = FuzzEntryFunctionMapping[self.project_lang]
         entry_node = self.find_definition_node(entry_function)
         if not entry_node:
             print("Entry function not found.")
-            return False
+            return None
 
         # Define a query to find "function_call" nodes
         function_call_query = self.parser_language.query(f"({self.call_func_name}) @func_call")
@@ -120,25 +112,23 @@ class BaseParser:
         # Execute the query
         captures = function_call_query.captures(entry_node)
         if not captures:
-            return False
+            return None
             
         # Print the nodes
         for node in captures["func_call"]:
             try:
                 # TODO C/C++ function name is the first child of the call expression
                 if function_name == node.children[0].text.decode("utf-8", errors="ignore"):
-                    return node.start_point.row, node.start_point.column, node.end_point.row, node.end_point.column
+                    return node
             except Exception as e:
                 print("Error in parsing the function call: ", e)
-        return -1, -1, -1, -1
+        return None
 
     def is_fuzz_function_called(self, function_name: str) -> bool:
-        self.get_fuzz_function_pos(function_name)
-        if self.get_fuzz_function_pos(function_name) == (-1, -1, -1, -1):
-            return False
-        return True
+        if self.get_fuzz_function_pos(function_name):
+            return True
+        return False
     
-
     def exist_function_definition(self, function_name: str) -> bool:
         if self.find_definition_node(function_name):
             return True

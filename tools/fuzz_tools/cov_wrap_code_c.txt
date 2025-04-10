@@ -1,5 +1,17 @@
+#include <unistd.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <time.h>
+
 extern uint8_t __start___sancov_cntrs;
 extern uint8_t __stop___sancov_cntrs;
+
+void save_sancov_counters();
+void reset_sancov_counters();
 
 void reset_sancov_counters() {
     uint8_t *start = &__start___sancov_cntrs;

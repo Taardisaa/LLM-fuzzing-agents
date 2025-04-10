@@ -5,7 +5,7 @@ from tools.fuzz_tools.log_parser import FuzzLogParser
 from tools.fuzz_tools.compiler import Compiler
 from utils.docker_utils import DockerUtils
 from utils.misc import extract_name
-from constants import FuzzResult, PROJECT_PATH, CompileResults, COV_WRAP_FILE_NAME, LanguageType
+from constants import FuzzResult, PROJECT_PATH, CompileResults, COV_WRAP_FILE_NAME, LanguageType, FuzzEntryFunctionMapping
 from tools.code_tools.parsers.c_parser import CParser
 from tools.code_tools.parsers.java_parser import JavaParser
 from pathlib import Path
@@ -15,7 +15,8 @@ import shutil
 
 class CovCollector():
 
-    def __init__(self, oss_fuzz_dir: str, project_name: str, new_project_name: str, project_lang: LanguageType):
+    def __init__(self, oss_fuzz_dir: str, project_name: str, new_project_name: str, project_lang: LanguageType, logger=None):
+        self.logger = logger
         
         self.oss_fuzz_dir = oss_fuzz_dir
         self.project_name = project_name
@@ -40,11 +41,16 @@ class CovCollector():
             return harness_code
         
         wrap_code = wrap_file.read_text()
-        # add the wrapper code before the fuzz entry
-
+        
         # find the fuzz entry
         parser = self.parser(None, harness_code, self.project_lang)
-        fuzz_start_row,fuzz_start_col, fuzz_end_row, fuzz_end_col = parser.get_fuzz_function_pos(function_name)
+        fuzz_node = parser.get_fuzz_function_pos(function_name)
+        if fuzz_node:
+            fuzz_start_row, fuzz_start_col, fuzz_end_row = fuzz_node.start_point.row, fuzz_node.start_point.column, fuzz_node.end_point.row
+        else:
+            print(f"Fuzz function {function_name} not found")
+            raise Exception(f"Fuzz function {function_name} not found")
+        
         # add reset_sancov_counters before fuzz function
         lines = harness_code.splitlines()
         
@@ -56,16 +62,22 @@ class CovCollector():
         lines.insert(fuzz_start_row, f"{indent}reset_sancov_counters();")
 
         # insert the wrapper code before the fuzz entry
-        row,_, _, _ = parser.get_fuzz_entry_pos()
-        lines.insert(row, wrap_code)
+        entry_function = FuzzEntryFunctionMapping[self.project_lang]
+        entry_node = parser.find_definition_node(entry_function)
+        if not entry_node:
+            raise Exception(f"Entry function {entry_function} not found")
+        
+        lines.insert(entry_node.start_point.row, wrap_code)
         harness_code =  "\n".join(lines)
 
         return harness_code
 
 
     def recompile(self, harness_code,  harness_path, fuzzer_name, function_name) -> bool:
-        
-        wrapped_code = self.gen_wrapped_code(harness_code, function_name)
+        if self.project_lang in [LanguageType.C, LanguageType.CPP]:
+            wrapped_code = self.gen_wrapped_code(harness_code, function_name)
+        else:
+            raise Exception(f"Language {self.project_lang} not supported for now")
 
         # init the compiler
         compiler = Compiler(self.oss_fuzz_dir, self.project_name, self.new_project_name)
@@ -78,13 +90,30 @@ class CovCollector():
         # run fuzzer driver with testcase
         return True
     
+    def clean_workspace(self):
+        '''Clean the workspace'''
+        try:        
+            # first remove the out directory
+            self.docker_utils.clean_build_dir()
+            # remove the docker image here
+            self.docker_utils.remove_image()
+            # remove the project directory
+            shutil.rmtree(os.path.join(self.oss_fuzz_dir, "projects", self.new_project_name))
+            # clean the build directory
+            shutil.rmtree(os.path.join(self.oss_fuzz_dir, "build", "out", self.new_project_name))
+
+        except:
+            pass
 
     # ./inchi_input_fuzzer -print_coverage=1 -runs=1  -timeout=100  ./corpora/ 2>&1 | grep inchi_dll.c | grep -w COVERED_FUNC | grep {}
     # ls -ltr
     def collect_coverage(self, harness_code, harness_path, fuzzer_name: str,
                           function_name: str, corpora_dir: Path) -> tuple[int, int, bool]:
 
-        self.recompile(harness_code, harness_path, fuzzer_name, function_name)
+        flag = self.recompile(harness_code, harness_path, fuzzer_name, function_name)
+        if not flag:
+            print(f"Recompile error: {flag}")
+            return 0, 0, False
         # run the call back
         cmd = ["python", "cov_c.py", "--fuzzer-name", fuzzer_name, 
                 "--corpus-dir", "./corpora/"]
@@ -101,10 +130,16 @@ class CovCollector():
         cov_path = local_out / "cov.json"
         if not cov_path.exists():
             print(f"Coverage file {cov_path} does not exist")
-            return 0, False
+            return 0, 0, False
         
         with open(cov_path, "r") as f:
             cov = json.load(f)
+
+            msg = cov.get("msg", "")
+            if msg != "Success":
+                print(f"Error running the coverage file: {msg}")
+                return 0, 0, False
+            
             init_cov, final_cov = cov.get("init_cov", 0), cov.get("final_cov", 0)
             if init_cov != 0 and final_cov > init_cov:
                 return init_cov, final_cov, True

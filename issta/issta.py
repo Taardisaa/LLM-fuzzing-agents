@@ -25,7 +25,7 @@ import sys
 from tools.results_analysis import run_agent_res
 from multiprocessing import Pool
 import logging
-from semantic_check import SemaCheck
+from issta.semantic_check import SemaCheck
 ISSTA_C_PROMPT = '''
 // The following is a fuzz driver written in C language, complete the implementation. Output the continued code in reply only.
 
@@ -106,6 +106,12 @@ Based on the above information, fix the code. Must provide the full fixed code.
 '''
 
 
+REMOVED_FUNC = ['spdk_json_parse', 'GetINCHIfromINCHI', 'GetINCHIKeyFromINCHI', 'GetStructFromINCHI',
+                'redisFormatCommand', 'stun_is_response', 'bpf_object__open_mem', 'lre_compile', 'JS_Eval', 
+                'dwarf_init_path', 'dwarf_init_b', 'parse_privacy', 'luaL_loadbufferx', 'gf_isom_open_file',
+                'zip_fread', 'dns_name_fromtext', 'dns_message_parse', 'isc_lex_getmastertoken', 
+                'dns_rdata_fromwire', 'dns_name_fromwire', 'dns_master_loadbuffer', 'isc_lex_gettoken', 
+                'dns_message_checksig', 'dns_rdata_fromtext']
 
 class FixerPromptBuilder:
     def __init__(self, oss_fuzz_dir: str,  project_name: str, new_project_name: str, cache_dir: str , usage_token_limit: int, logger: logging.Logger,
@@ -191,17 +197,17 @@ class FixerPromptBuilder:
 
 class SemaCheckNode:
     def __init__(self, oss_fuzz_dir: str, project_name: str, new_project_name: str, function_signature: str, 
-                 logger: logging.Logger):
+                 project_lang, logger: logging.Logger):
         self.oss_fuzz_dir = oss_fuzz_dir
         self.project_name = project_name
         self.new_project_name = new_project_name
         self.func_name = extract_name(function_signature)
         self.logger = logger
-        self.checker = SemaCheck(oss_fuzz_dir, project_name, new_project_name, self.func_name)
+        self.checker = SemaCheck(oss_fuzz_dir, project_name, new_project_name, self.func_name, project_lang)
 
     def check(self, state: dict):
         # run semantic check
-        flag = self.checker.check(state["harness_code"], state["harness_path"], state["fuzzer_name"])
+        flag = self.checker.check(state["harness_code"], state["fuzzer_path"], state["fuzzer_name"])
         if flag:
             self.logger.info("Semantic check passed")
             return{"messages": ("user", END + "Semantic check passed")}
@@ -365,7 +371,7 @@ class ISSTAFuzzer(AgentFuzzer):
                              self.run_time,  self.save_dir,  self.logger)
         
         compiler = CompilerWraper(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.harness_pairs, self.save_dir, self.logger)
-        checker = SemaCheckNode(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.function_signature, self.logger)
+        checker = SemaCheckNode(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.function_signature, self.project_lang, self.logger)
 
         # build the graph
         builder = StateGraph(FuzzState)
@@ -435,7 +441,6 @@ class ISSTAFuzzer(AgentFuzzer):
 
 def process_project(llm_name, oss_fuzz_dir, project_name, function_signature, usage_token_limit, run_time, max_fix, max_tool_call, save_dir, cache_dir):
 
-
     try:
         agent_fuzzer = ISSTAFuzzer(llm_name, oss_fuzz_dir, project_name, function_signature, usage_token_limit=usage_token_limit, run_time=run_time, max_fix=max_fix,
                                     max_tool_call=max_tool_call, clear_msg_flag=True, save_dir=save_dir, cache_dir=cache_dir)
@@ -455,7 +460,7 @@ def get_all_successful_func(save_dir, iteration):
     all_success_sig = []
     for i in range(1, iteration):
 
-        res_file = os.path.join(save_dir, f"issta{i}", f"success_fsg.pkl")
+        res_file = os.path.join(save_dir, f"issta{i}", f"success_name.pkl")
         if not os.path.exists(res_file):
             continue
             
@@ -470,9 +475,8 @@ def run_parallel(iteration=1):
     # build graph
     oss_fuzz_dir = "/home/yk/code/oss-fuzz/"
     # absolute path
-    save_dir = os.path.join(PROJECT_PATH, "outputs")
-    cur_save_dir = os.path.join(save_dir,"extend", f"issta{iteration}")
-    # cur_save_dir = os.path.join(save_dir, f"issta{iteration}")
+    save_dir = os.path.join(PROJECT_PATH, "outputs", "issta_apr7")
+    cur_save_dir = os.path.join(save_dir, f"issta{iteration}")
     cache_dir = "/home/yk/code/LLM-reasoning-agents/cache/"
     llm_name = "gpt-4-0613"
     run_time=0.5
@@ -481,7 +485,11 @@ def run_parallel(iteration=1):
     usage_token_limit = 1000
     function_dict = {}
 
-    # all_success_sig = get_all_successful_func(save_dir, iteration)
+    if iteration > 1:
+        all_success_func = get_all_successful_func(save_dir, iteration)
+    else:
+        all_success_func = []
+
     # read benchmark names
     bench_dir = os.path.join(PROJECT_PATH, "benchmark-sets", "ntu")
     all_files = os.listdir(bench_dir)
@@ -500,21 +508,31 @@ def run_parallel(iteration=1):
             data = yaml.safe_load(f)
             project_name = data.get("project")
             lang_name = data.get("language")
-            project_harness = data.get("target_path")
-            # if project_name not in ["igraph", "liblouis", "libmodbus", "libyang", "lua", "pjsip", "quickjs", "seliux"]:
-            # if project_name not in ["coturn", "gdk-pixbuf", "kamilio", "igraph", "liblouis", "libmodbus", "libyang", "lua", "pjsip", "quickjs", "seliux"]:
-                # continue
+            # project_harness = data.get("target_path")
+            # if project_name not in ["igraph", "liblouis", "libmodbus", "libyang", "lua", "pjsip", "quickjs", "seliux", 
+                                    # "coturn", "gdk-pixbuf", "kamilio", "igraph", "liblouis", "libmodbus", "libyang", "lua", "pjsip", "quickjs", "seliux"]:
+            # continue
 
             if lang_name not in ["c++", "c"]:
                 continue
         
             function_list = []
             for function in data.get("functions"):
-                function_signature = function["signature"].replace("\n", "")
+                function_signature = function["signature"]
+                function_name = extract_name(function_signature)
                 
-                # if function_signature in all_success_sig:
-                    # continue
+                if function_name not in ["get_src_uri", "parse_from_uri", "parse_identityinfo_header", 
+                                        ]:
+                    continue
                 
+                # # not success
+                # if function_name in all_success_func:
+                #     continue
+                
+                # # not in the removed list
+                # if function_name in REMOVED_FUNC:
+                #     continue
+
                 total += 1
                 function_list.append(function_signature)
 
@@ -525,7 +543,7 @@ def run_parallel(iteration=1):
 
     print("total projects:", total)
     # os.cpu_count()//2
-    with Pool(processes=os.cpu_count()//2) as pool:
+    with Pool(processes=os.cpu_count()//3) as pool:
 
         for i in range(max_num_function):
             for key in function_dict.keys():
@@ -533,26 +551,28 @@ def run_parallel(iteration=1):
                     continue
                 function_signature = function_dict[key][i]
                 project_name = key
-                print(f"{i} of functions in {key}: {len(function_dict[key])}")
+                print(f"{i+1}th of functions in {key}: {len(function_dict[key])}")
                 # llm_name, oss_fuzz_dir, project_name, function_signature, run_time, max_fix, max_tool_call, save_dir, cache_dir
                 # pool.apply(process_project, args=(llm_name, oss_fuzz_dir, project_name, function_signature, usage_token_limit, run_time, max_fix, max_tool_call,  cur_save_dir, cache_dir))
                 pool.apply_async(process_project, args=(llm_name, oss_fuzz_dir, project_name, function_signature, usage_token_limit, run_time, max_fix, max_tool_call,  cur_save_dir, cache_dir))
 
+                
         pool.close()
         pool.join()
 
-    # run_agent_res(cur_save_dir)
+    run_agent_res(cur_save_dir)
 
 
 def run_single():
       # build graph
     OSS_FUZZ_DIR = "/home/yk/code/oss-fuzz/"
-    PROJECT_NAME = "igraph"
+    PROJECT_NAME = "w3m"
 
     # absolute path
     CACHE_DIR = "/home/yk/code/LLM-reasoning-agents/cache/"
     # llm_name = "gpt-4o-mini"
     llm_name = "gpt-4-0613"
+    # llm_name = "gpt-4o"
     # function_signature =
     # func_list = [
     #     "int parse_content_disposition(struct sip_msg *)",
@@ -568,12 +588,13 @@ def run_single():
         # "int get_src_uri(sip_msg_t *, int, str *)",
         # "int parse_pai_header(const struct sip_msg *)",
     # ]
-    func_list = ["igraph_error_t igraph_read_graph_edgelist(igraph_t *, FILE *, igraph_integer_t, igraph_bool_t)"]
+    func_list = ["Str wc_Str_conv_with_detect(Str, wc_ces *, wc_ces, wc_ces)"]
+    # func_list = ["int32_t llama_vocab_n_tokens(const struct llama_vocab * vocab);"]
     # func_list = ["GdkPixbufAnimation* gdk_pixbuf_animation_new_from_file(const char         *filename, GError  **error)"]
 
     for function_signature in func_list:
-        for i in range(1,4):
-            SAVE_DIR = f"/home/yk/code/LLM-reasoning-agents/outputs/extend/issta{i}/"
+        for i in range(1,2):
+            SAVE_DIR = f"/home/yk/code/LLM-reasoning-agents/outputs/llamacpp/issta{i}/"
             # function_signature = r"int onig_new(regex_t **, const OnigUChar *, const OnigUChar *, OnigOptionType, OnigEncoding, OnigSyntaxType *, OnigErrorInfo *)"
 
             agent_fuzzer = ISSTAFuzzer(llm_name, OSS_FUZZ_DIR, PROJECT_NAME, function_signature, usage_token_limit = 1000,  run_time=0.5, max_fix=5,
@@ -598,5 +619,5 @@ def run_single():
 if __name__ == "__main__":
 
     # start with 1
-    # run_parallel(3)
-    run_single()
+    run_parallel(3)
+    # run_single()

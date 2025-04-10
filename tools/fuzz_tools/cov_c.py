@@ -30,7 +30,7 @@ def reply_corpus(fuzzer_name: str, corpus_path: str, timeout: int = 100) -> Opti
         cmd.append(corpus_path)
         
         # Run command and capture output
-        result = subprocess.run(
+        subprocess.run(
             cmd, 
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,  # Merge stderr into stdout (like 2>&1)
@@ -39,11 +39,11 @@ def reply_corpus(fuzzer_name: str, corpus_path: str, timeout: int = 100) -> Opti
         )
       
     except subprocess.TimeoutExpired:
-        logger.error(f"Fuzzer command timed out after {timeout} seconds")
-        return None
+        msg = f"Error: Fuzzer command timed out after {timeout} seconds"
+        return msg
     except Exception as e:
-        logger.error(f"Error running fuzzer: {e}")
-        return None
+        msg = f"Error: running fuzzer {e}"
+        return msg
 
 def sort_files(directory: Path) -> List[Path]:
     """
@@ -55,9 +55,7 @@ def sort_files(directory: Path) -> List[Path]:
     Returns:
         List of paths to the oldest files
     """
-    if not directory.exists():
-        raise ValueError(f"Directory does not exist: {directory}")
-    
+   
     # Get all files with modification times
     files = [
         (file, file.stat().st_mtime)
@@ -83,28 +81,43 @@ def get_function_cov(fuzzer_name: str,  corpus_dir: str) -> tuple[int, bool]:
     Returns:
         Boolean indicating successful reduction
     """
-    import numpy as np
-
     reply_corpus(fuzzer_name, corpus_dir)
+    bitmaps_dir = Path("./bitmaps")
 
     # list all files in bitmaps directory
-    bitmaps_dir = Path("./bitmaps")
+    if not bitmaps_dir.exists():
+        msg = f"Error: Directory does not exist: {bitmaps_dir}"
+        return 0, 0, msg
+    
     all_maps = sort_files(bitmaps_dir)
+    if len(all_maps) == 0:
+        return 0, 0, "Error: No bitmap files found"
+    
+    # Read first file as binary and convert to boolean array
+    with open(all_maps[0], 'rb') as f:
+        first_file_bytes = f.read()
+        merged_map = [byte != 0 for byte in first_file_bytes]
 
-    merged_map = np.frombuffer(Path(all_maps[0]).read_bytes(), dtype=np.bool_)
     init_cov = 0
     for counter_map_file in all_maps:
-        counter_map = np.frombuffer(Path(counter_map_file).read_bytes(), dtype=np.bool_)
-
+        # Read each file as binary and convert to boolean array
+        with open(counter_map_file, 'rb') as f:
+            current_file_bytes = f.read()
+            counter_map = [byte != 0 for byte in current_file_bytes]
+        
+        # Count number of True values
+        counter_sum = sum(counter_map)
+        
         # only counter once
-        if counter_map.sum() != 0 and init_cov == 0:
-            init_cov = int(counter_map.sum())
+        if counter_sum != 0 and init_cov == 0:
+            init_cov = counter_sum
         
-        merged_map = merged_map | counter_map
+        # Perform bitwise OR operation manually
+        merged_map = [a or b for a, b in zip(merged_map, counter_map)]
         
-    done_cov = int(merged_map.sum())
+    done_cov = sum(merged_map)
     
-    return init_cov, done_cov
+    return init_cov, done_cov, "Success"
 
 
 def main():
@@ -120,12 +133,12 @@ def main():
     logger = setup_logging()
     
     # Run corpus reduction
-    init_cov, final_cov = get_function_cov(
+    init_cov, final_cov, msg = get_function_cov(
         args.fuzzer_name, 
         args.corpus_dir, 
     )
     with open("cov.json", "w") as f:
-        f.write(json.dumps({"init_cov":init_cov, "final_cov": final_cov}, indent=4))
+        f.write(json.dumps({"init_cov":init_cov, "final_cov": final_cov, "msg": msg}, indent=4))
 
 if __name__ == '__main__':
     main()

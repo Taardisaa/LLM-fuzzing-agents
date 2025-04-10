@@ -213,9 +213,9 @@ class CompilerWraper(Compiler):
 
             # compile success
             else:
-                return {"messages": ("user", compile_res), "build_msg": all_msg, "fuzzer_name": fuzzer_name}
+                return {"messages": ("user", compile_res), "build_msg": all_msg, "fuzzer_name": fuzzer_name, "fuzzer_path": harness_path}
                 
-        return {"messages": ("user", END + "Link Error, tried all harness"), "fuzzer_path": harness_path}
+        return {"messages": ("user", END + "Link Error, tried all harness")}
 
 class FixerPromptBuilder:
     def __init__(self, compile_fix_prompt: str, fuzz_fix_prompt: str, project_lang: LanguageType, clear_msg_flag: bool):
@@ -393,7 +393,7 @@ class AgentFuzzer():
 
         # random generate a string for new project name
         random_str = ''.join(random.choices("abcdefghijklmnopqrstuvwxyz", k=16))
-        self.new_project_name = f"{project_name}_{extract_name(self.function_signature)}_{random_str}"
+        self.new_project_name = f"{project_name}_{extract_name(self.function_signature)}_{random_str}".lower()
         self.save_dir = os.path.join(save_dir, self.new_project_name)
         self.logger = self.setup_logging()
 

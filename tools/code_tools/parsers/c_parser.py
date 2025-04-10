@@ -76,10 +76,12 @@ class CParser(BaseParser):
 # Example usage
 if __name__ == "__main__":
     file_path = "tools/code_tools/parsers/demo.c"  # Replace with your C/C++ file path
-    line = 1  # Replace with the line number of the function's start position
+    line = 0  # Replace with the line number of the function's start position
     column = 0  # Replace with the column number of the function's start position
 
-    extractor = CParser(file_path, project_lang=LanguageType.C)
-    extracted_code = extractor.get_symbol_source("bpf_object__open_mem", line, LSPFunction.Declaration)
+    # IGRAPH_EXPORT igraph_error_t igraph_read_graph_pajek(igraph_t *graph, FILE *instream);
+    # TODO CPP is better for the above function, we should try to use CPP if C is not working
+    extractor = CParser(file_path, project_lang=LanguageType.CPP)
+    extracted_code = extractor.get_symbol_source("igraph_read_graph_pajek", line, LSPFunction.Declaration)
     print("Function source code:")
     print(extracted_code)

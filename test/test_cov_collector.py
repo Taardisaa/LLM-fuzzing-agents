@@ -7,7 +7,7 @@ import shutil
 from utils.oss_fuzz_utils import OSSFuzzUtils
 from utils.misc import extract_name
 
-def test_cov_collector(oss_fuzz_dir: Path, project_name: str, harness_file: Path, function_name: str, corpora_dir: Path):
+def test_one_cov_collector(oss_fuzz_dir: Path, project_name: str, harness_file: Path, function_name: str, corpora_dir: Path):
     
     random_str = ''.join(random.choices("abcdefghijklmnopqrstuvwxyz", k=16))
     new_project_name = "{}_{}".format(project_name, random_str)
@@ -21,20 +21,15 @@ def test_cov_collector(oss_fuzz_dir: Path, project_name: str, harness_file: Path
 
     shutil.copytree(scr_path, dst_path, dirs_exist_ok=True)
 
-    # # init the compiler
-    # compiler = Compiler(oss_fuzz_dir, project_name, new_project_name)
-    # # compile the code
-    # compile_res, build_msg = compiler.compile(harness_file.read_text(), project_harness_path, project_fuzzer_name)
-    # if compile_res != CompileResults.Success:
-    #     print(f"Compile error: {build_msg}")
-    #     return 0, 0, False
     
     harness_code = harness_file.read_text()
     # init the cov collector
     cov_collector = CovCollector(oss_fuzz_dir, project_name, new_project_name, project_lang)
     # collect the coverage
     init_cov, final_cov, chenged = cov_collector.collect_coverage(harness_code, project_harness_path, project_fuzzer_name, function_name, corpora_dir)
-    print(f"init_cov: {init_cov} final_cov:{final_cov}, Coverage changed: {chenged}")
+    
+    cov_collector.clean_workspace()
+    # print(f"init_cov: {init_cov} final_cov:{final_cov}, Coverage changed: {chenged}")
     return init_cov, final_cov, chenged
 
 
@@ -42,7 +37,7 @@ def test_all():
     # 
     OSS_FUZZ_DIR = Path("/home/yk/code/oss-fuzz/")
 
-    res_path = Path("/home/yk/code/LLM-reasoning-agents/outputs/issta3")
+    res_path = Path("/home/yk/code/LLM-reasoning-agents/outputs/issta_apr7/issta3")
 
     with open(res_path / "cov.txt", "w") as f:
         sorted_entries = sorted(res_path.iterdir(), key=lambda x: x.name)
@@ -53,7 +48,8 @@ def test_all():
 
             log_file = save_dir / "agent.log"
             log_content = log_file.read_text()
-            if "Fuzz res:No Error" in log_content and "Link Error" not in log_content:
+
+            if "Semantic check passed" in log_content:
                 
                 # build graph
                 PROJECT_NAME = save_dir.name.split("_")[0]
@@ -66,7 +62,7 @@ def test_all():
 
                 print(f"Project name: {PROJECT_NAME}, function name: {function_name}", file=f)
                 try:
-                    init_cov, final_cov,  flag = test_cov_collector(OSS_FUZZ_DIR, PROJECT_NAME, harness_file, function_name, corpora_dir)
+                    init_cov, final_cov,  flag = test_one_cov_collector(OSS_FUZZ_DIR, PROJECT_NAME, harness_file, function_name, corpora_dir)
                     print(f"Init Coverage: {init_cov}, Final Cov:{final_cov}, Coverage changed: {flag}", file=f)
                     f.flush()
                 except Exception as e:
@@ -78,11 +74,11 @@ def test_single():
     OSS_FUZZ_DIR = Path("/home/yk/code/oss-fuzz/")
 
     
-    save_dir = Path("/home/yk/code/LLM-reasoning-agents/outputs/issta1/civetweb_clnxemvscxbxgpqp/")
+    save_dir = Path("/home/yk/code/LLM-reasoning-agents/outputs/issta_apr7/issta1/croaring_roaring_bitmap_portable_deserialize_safe_dxlivceeyjkcsoqn")
 
     log_file = save_dir / "agent.log"
     log_content = log_file.read_text()
-    if "Fuzz res:No Error" in log_content and "Link Error" not in log_content:
+    if "Semantic check passed" in log_content and "Link Error" not in log_content:
         
         # build graph
         PROJECT_NAME = save_dir.name.split("_")[0]
@@ -95,11 +91,11 @@ def test_single():
 
         print(f"Project name: {PROJECT_NAME}, function name: {function_name}")
         try:
-            init_cov, final_cov,  flag = test_cov_collector(OSS_FUZZ_DIR, PROJECT_NAME, harness_file, function_name, corpora_dir)
+            init_cov, final_cov,  flag = test_one_cov_collector(OSS_FUZZ_DIR, PROJECT_NAME, harness_file, function_name, corpora_dir)
             print(f"Init Coverage: {init_cov}, Final Cov:{final_cov}, Coverage changed: {flag}")
         except Exception as e:
             print(e)
 
 if __name__ == "__main__":
 
-    test_single()
+    test_all()
