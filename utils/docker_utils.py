@@ -1,12 +1,24 @@
 import docker
-from collections import defaultdict
 import subprocess as sp
 import os
-from constants import LanguageType, PROJECT_PATH, DockerResults
+from constants import LanguageType, DockerResults
+from pathlib import Path
+from docker.models.containers import Container
+from typing import Union, Optional, Callable, Any, cast
+
+#  c
+# c++  # cpp for tree-sitter
+# go
+# rust
+# python
+# jvm (Java, Kotlin, Scala and other JVM-based languages)
+# swift
+# javascript
+# Fuzzing languages
 
 class DockerUtils:
 
-    def __init__(self, ossfuzz_dir: str, project_name: str, new_project_name: str, project_lang: str):
+    def __init__(self, ossfuzz_dir:Path, project_name: str, new_project_name: str, project_lang: LanguageType):
         self.image_name = "gcr.io/oss-fuzz/{}".format(new_project_name)
         self.ossfuzz_dir = ossfuzz_dir
         self.project_name = project_name
@@ -14,7 +26,7 @@ class DockerUtils:
         self.project_lang = project_lang
 
         # for CPP, the language is c++, other languages are the same as the project language
-        self.FUZZING_LANGUAGE = project_lang.lower() if project_lang !=  LanguageType.CPP else "c++"
+        self.fuzzing_lang = project_lang.value.lower() if project_lang !=  LanguageType.CPP else "c++"
 
 
     def build_image(self, build_image_cmd: list[str]) -> bool:
@@ -30,19 +42,21 @@ class DockerUtils:
 
 
 
-    def remove_image(self) -> None:
+    def remove_image(self) -> str:
         """
         Remove the Docker image from the local machine.
         """
         try:
             client = docker.from_env()
-            client.images.remove(self.image_name)
-        except docker.errors.ImageNotFound:
+            client.images.remove(self.image_name) # type: ignore
+            return "Image removed successfully."
+        except docker.errors.ImageNotFound: # type: ignore
             return "Image not found."       
         except Exception as e:
-            return e
+            print(f"Error removing image: {e}")
+            return str(e)
 
-    def contrainer_exec_run(self, container, cmd: str) -> str:
+    def contrainer_exec_run(self, container:Container, cmd: str) -> str:
         """
         Execute a command inside a Docker container.
         :param container: Docker container object
@@ -53,19 +67,20 @@ class DockerUtils:
         cmd_res = container.exec_run(cmd, tty=True)  # 5 minutes timeout
         return cmd_res.output.decode("utf-8")
 
-    def clean_build_dir(self) -> str:
+    def clean_build_dir(self) -> None:
         """
         Clean the /out directory in the Docker container.
         """
-        def remove_call_back(container):
+        def remove_call_back(container: Container) -> str:
             container.exec_run("rm -rf /out/*", tty=True)
             container.exec_run("rm -rf /work/*", tty=True)
-
+            return ""
+        
         # clean the /out directory
         self.run_call_back(remove_call_back)
 
 
-    def run_call_back(self, call_back: str, *args, **kargs) -> str:
+    def run_call_back(self, call_back: Callable[[Container], str], *args: Any, **kargs: Any) -> str:
         """
         Explore the directory structure of a Docker image hosted on GCR.
         :param image_name: Full image name (e.g., gcr.io/oss-fuzz/libxml2)
@@ -76,38 +91,37 @@ class DockerUtils:
         client = docker.from_env()
         try:
             # Create a container from the image without starting it
-            container = client.containers.create(self.image_name, command="/bin/sh", tty=True,  # Allocate a pseudo-TTY
+            container = client.containers.create(self.image_name, command="/bin/sh", tty=True,  # Allocate a pseudo-TTY   # type: ignore
                                                  privileged=True,  # Enables privileged mode
-                                                 environment={"FUZZING_LANGUAGE": self.project_lang},  # Set the environment variable
+                                                 environment={"FUZZING_LANGUAGE": self.fuzzing_lang},  # Set the environment variable
                                                  volumes={compile_out_path: {"bind": "/out", "mode": "rw"}},  # Mount the project directory
                                                  )  # Mount the cache directory (if provided
+            container = cast(Container, container) 
             try:
                 # Start the container
-                container.start()
+                container.start() # type: ignore
                 cmd_res = call_back(container, *args)
-                if isinstance(cmd_res, str):
-                    return cmd_res
-                else:
-                    return cmd_res.output.decode("utf-8")
-
+                return cmd_res
+               
             finally:
                 # Clean up by removing the container
                 container.remove(force=True)
 
+
         except Exception as e:
-            return f"{DockerResults.Error}: {e}"
+            return f"{DockerResults.Error.value}: {e}"
       
-    def run_cmd(self, cmd_list: list[str], timeout: int = None, **kargs) -> str:
+    def run_cmd(self, cmd_list: Union[list[str], str], timeout:Optional[int]=None, **kargs:Any) -> str:
 
         client = docker.from_env()
         try:
-            container = client.containers.run(
+            container = client.containers.run( # type: ignore
                 self.image_name,
                 command=cmd_list,  # Simulating a long-running process
                 detach=True,
                 tty=True, 
                 privileged=True,  # Enables privileged mode
-                environment={"FUZZING_LANGUAGE": self.project_lang},  # Set the environment variable
+                environment={"FUZZING_LANGUAGE": self.fuzzing_lang},  # Set the environment variable
                 **kargs
             )
 
@@ -122,9 +136,7 @@ class DockerUtils:
             return logs
 
         except Exception as e:
-            container.stop()
-            container.remove()
-            return f"{DockerResults.Error}: {e}"
+            return f"{DockerResults.Error.value}: {e}"
 
 
 

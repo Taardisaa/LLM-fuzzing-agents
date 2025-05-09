@@ -1,7 +1,7 @@
 from constants import CodeSearchAPIName, LanguageType
 import os
 import requests
-from tools.code_tools.parsers.c_parser import CParser
+from tools.code_tools.parsers.c_cpp_parser import CCPPParser
 import time
 
 class CodeSearch():
@@ -105,7 +105,7 @@ class CodeSearch():
                 continue
 
             # check if the function is called by AST
-            parser = CParser(None, source_code,  self.project_lang)
+            parser = CCPPParser(None, source_code,  self.project_lang)
             
             for lineno in call_lines:
                 # find the function call code

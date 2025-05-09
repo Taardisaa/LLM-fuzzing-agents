@@ -1,15 +1,14 @@
 import os
 import subprocess as sp
-import re
 from tools.fuzz_tools.log_parser import FuzzLogParser
-from utils.misc import remove_color_characters
-from constants import FuzzResult
+from constants import FuzzResult, LanguageType
 import time
+from pathlib import Path
 
 class FuzzerRunner():
 
-    def __init__(self, oss_fuzz_dir: str, new_project_name: str,
-                 project_lang: str, run_timeout: int , save_dir: str ):
+    def __init__(self, oss_fuzz_dir: Path, new_project_name: str,
+                 project_lang: LanguageType, run_timeout: int , save_dir: Path):
         
         self.oss_fuzz_dir = oss_fuzz_dir
         self.new_project_name = new_project_name
@@ -18,16 +17,16 @@ class FuzzerRunner():
         self.project_lang = project_lang
 
         
-    def run_fuzzing(self, counter: int, fuzzer_name: str) -> FuzzResult:
+    def run_fuzzing(self, counter: int, fuzzer_name: str) -> tuple[FuzzResult, list[str], list[list[str]]]:
         # run the fuzzing
-
+        print(f"Running fuzzer {fuzzer_name} for {self.new_project_name}...")
         # create the corpus directory
         corpus_dir = os.path.join(self.save_dir, "corpora")
         if not os.path.exists(corpus_dir):
             os.makedirs(corpus_dir)
 
         # this is copied from the oss-fuzz-gen, thanks to the author
-        command = [ 'python3', f'{self.oss_fuzz_dir}/infra/helper.py', 'run_fuzzer',
+        command = [ 'python3',  os.path.join(self.oss_fuzz_dir, "infra", "helper.py"), 'run_fuzzer',
                     '--corpus-dir', corpus_dir,
                       self.new_project_name, fuzzer_name, '--',
                     '-print_final_stats=1',
@@ -39,10 +38,9 @@ class FuzzerRunner():
                     '-timeout=30',
                     '-detect_leaks=0'
             ]
-
+        log_file_path = self.save_dir / f"fuzzing{counter}.log"
         try:
             # save the fuzz log to a file
-            log_file_path = os.path.join(self.save_dir, f"fuzzing{counter}.log")
             with open(log_file_path, "w") as log_file:
                 sp.run(command,
                     stdout=log_file,  # Capture standard output

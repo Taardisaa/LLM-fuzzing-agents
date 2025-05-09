@@ -1,7 +1,7 @@
 
 from constants import LanguageType, FuzzResult
 import re
-import math
+from pathlib import Path
 
 #  those errors are only for libfuzzer on c/c++ project
 ASANError = [
@@ -37,19 +37,17 @@ LeakSanitizerError = [
     ]
 
 
-
-
 class CompileErrorExtractor():
-    def __init__(self, project_lang):
+    def __init__(self, project_lang: LanguageType):
         self.project_lang = project_lang
         
-    def extract_error_message_cpp(self, error_msg: str, range_value: int = 5):
+    def extract_error_message_cpp(self, error_msg: str, range_value: int = 5) -> list[str]:
         error_list = error_msg.split("\n")
 
         # last error message
         # TODO multiple error messages
       
-        index_list = []
+        index_list:list[int] = []
         for i, line in enumerate(error_list):
             # this pttern
             cpp_pattern =  " error:"
@@ -57,7 +55,7 @@ class CompileErrorExtractor():
                 index_list.append(i)
         
         # reduce overlap between errors and extract the error message with in the range
-        all_error = []
+        all_error: list[str] = []
         
         for i, line_index in enumerate(index_list):
             
@@ -79,10 +77,7 @@ class CompileErrorExtractor():
         return all_error
 
 
-        
-
-
-    def extract_error_message(self, error_msg: str) -> list[list[str]]:
+    def extract_error_message(self, error_msg: str) -> list[str]:
         '''Extract the error message from the error message'''
         if self.project_lang in [LanguageType.CPP, LanguageType.C]:
             return self.extract_error_message_cpp(error_msg)
@@ -92,32 +87,32 @@ class CompileErrorExtractor():
 
 
 class FuzzLogParser():
-    def __init__(self, project_lang):
+    def __init__(self, project_lang: LanguageType):
         self.project_lang = project_lang
         # self.compile_error_extractor = CompileErrorExtractor(project_lang)
 
-    def parse_log(self, log_file: str):
+    def parse_log(self, log_file: Path)-> tuple[FuzzResult, list[str], list[list[str]]]:
         try:
             with open(log_file, "r", encoding="utf-8", errors='ignore') as file:
                 log = file.read()
             
             return self.parse_str(log)
         except Exception as e:
-            return FuzzResult.ReadLogError, e, None
+            return FuzzResult.ReadLogError, [str(e)], []
     
-    def parse_str(self, log: str):
+    def parse_str(self, log: str) -> tuple[FuzzResult, list[str], list[list[str]]]:
+        """Parse the log file and extract errors."""
 
         assert isinstance(log, str), "log must be a string"
         # This only test on libfuzzer for c/c++ project
 
         # Define the error patterns
         error_patterns = ['ERROR: LeakSanitizer',  'ERROR: libFuzzer:', 'ERROR: AddressSanitizer']
-        crash_patterns = "Test unit written to"
         
         if any(error_pattern in log for error_pattern in error_patterns):
-            error_type_line = []
-            stack_list = []
-            one_stack = []
+            error_type_line:list[str] = []
+            stack_list: list[list[str]] = []
+            one_stack:list[str] = []
 
             stack_index = 0
             # Extract and print the errors
@@ -148,12 +143,12 @@ class FuzzLogParser():
         done_cov_value = done_cov.group(1) if done_cov else None
 
         if not inited_cov_value or not done_cov_value:
-            return FuzzResult.LackCovError, None, None
+            return FuzzResult.LackCovError, [], []
 
         if done_cov_value == inited_cov_value:
-            return FuzzResult.ConstantCoverageError, None, None
+            return FuzzResult.ConstantCoverageError, [], []
         
-        return FuzzResult.NoError, None, None
+        return FuzzResult.NoError, [], []
 
 
 if __name__ == "__main__":
@@ -161,7 +156,7 @@ if __name__ == "__main__":
     # with open(log_file, "r") as file:
         # log = file.read()
     parser = FuzzLogParser(LanguageType.C)
-    res, error_type, stacks = parser.parse_log(log_file)
+    res, error_type, stacks = parser.parse_log(Path(log_file))
     print(res)
     print(error_type)
     print(stacks)

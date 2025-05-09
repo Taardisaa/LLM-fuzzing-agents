@@ -1,22 +1,15 @@
-from tree_sitter import Language, Parser
-import tree_sitter_c  # For C language
-import tree_sitter_cpp  # For C++ language
-import tree_sitter_java  # For Java language
-from constants import LanguageType, FuzzEntryFunctionMapping, LSPFunction
+from constants import LanguageType, LSPFunction
 from tools.code_tools.parsers.base_parser import BaseParser
+from pathlib import Path
+from typing import Optional
 
-parser_language_mapping = {
-    LanguageType.C: tree_sitter_c.language(),
-    LanguageType.CPP: tree_sitter_cpp.language(),
-    LanguageType.JAVA: tree_sitter_java.language(),
-}
 
 class JavaParser(BaseParser):
-    def __init__(self, file_path: str, source_code: str = None, project_lang: LanguageType = LanguageType.JAVA):
-        super().__init__(file_path, source_code, LanguageType = LanguageType.JAVA)
+    def __init__(self, file_path: Optional[Path], source_code: Optional[str] = None, project_lang: LanguageType = LanguageType.JAVA):
+        super().__init__(file_path, source_code, LanguageType.JAVA)
 
 
-    def get_symbol_source(self, symbol_name: str, line: int, lsp_function: str) -> str:
+    def get_symbol_source(self, symbol_name: str, line: int, lsp_function: LSPFunction) -> str:
         """
         Retrieve the full source code of a symbol based on its start position.
         :param symbol_name: The name of the function to find.
@@ -80,7 +73,7 @@ if __name__ == "__main__":
     line = 46  # Replace with the line number of the function's start position
     column = 2  # Replace with the column number of the function's start position
 
-    extractor = JavaParser(file_path, project_lang=LanguageType.JAVA)
+    extractor = JavaParser(Path(file_path), project_lang=LanguageType.JAVA)
     # function_code = extractor.is_called("add")
     # is_called = extractor.have_definition("add")
     extracted_code = extractor.get_symbol_source("getBoolean", 81, LSPFunction.Declaration)

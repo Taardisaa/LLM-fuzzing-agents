@@ -2,14 +2,11 @@ from utils.docker_utils import DockerUtils
 from constants import ToolDescMode, LanguageType, LSPFunction
 import json
 import os
-import shutil
 import logging
-import subprocess as sp
 from constants import LSPResults, Retriever, DockerResults, PROJECT_PATH
-from multiprocessing import Process, Queue
-from langchain_core.tools import tool
-
-
+from pathlib import Path
+from typing import Callable, Any
+import functools
 
 header_desc_mapping = {
         ToolDescMode.Simple: """
@@ -34,17 +31,16 @@ header_desc_mapping = {
         """
     }
 
-import functools
 
-def catch_exception(func):
+def catch_exception(func: Callable[..., list[dict[str, str]]]) -> Callable[..., list[dict[str, str]]]:
     @functools.wraps(func)
-    def wrapper(self, *args, **kwargs):
+    def wrapper(self: Any, *args: Any, **kwargs: Any)->list[dict[str, str]]: 
         try:
             return func(self, *args, **kwargs)
         except Exception as e:
-            self.logger.error(f"Error in {func.__name__}: {str(e)}")
+            self.logger.error(f"Error in {func.__name__}: {str(e)}") # type: ignore
             return []
-    return wrapper
+    return wrapper # type: ignore
 
 class CodeRetriever():
     # TODO: how to deal with the same symbol name in different files, we may not know the file path
@@ -58,7 +54,8 @@ class CodeRetriever():
     4. Symbol cross reference for a symbol name.
     '''
 
-    def __init__(self, oss_fuzz_dir: str, project_name: str, new_project_name: str, project_lang: LanguageType, cache_dir: str, logger: logging.Logger):
+    def __init__(self, oss_fuzz_dir: Path, project_name: str, new_project_name: str, 
+                 project_lang: LanguageType, cache_dir: Path, logger: logging.Logger):
 
         self.oss_fuzz_dir = oss_fuzz_dir
         self.project_name = project_name
@@ -68,7 +65,7 @@ class CodeRetriever():
         self.logger = logger
         self.docker_tool = DockerUtils(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang)
 
-    @tool
+
     def view_code(self, file_path: str, line_start: int, line_end: int) -> str:
         """
         Reads a specific portion of code from the file path.
@@ -88,25 +85,29 @@ class CodeRetriever():
             self.logger.warning(result)
             return ""
         return result
+    
+    # def get_all_functions(header_file: str) -> list:
+    #     """
+    #     """
         
     @catch_exception
-    def call_container_code_retriever(self, symbol_name: str, lsp_function: LSPFunction, retriver: Retriever) -> list[dict]:
+    def call_container_code_retriever(self, symbol_name: str, lsp_function: LSPFunction, retriver: Retriever) -> list[dict[str, str]]:
 
-        compile_out_path = os.path.join(self.oss_fuzz_dir, "build", "out", self.new_project_name)
-        os.makedirs(compile_out_path, exist_ok=True)
-        compile_json_path = os.path.join(self.cache_dir,self.project_name,  "compile_commands.json")
+        compile_out_path = self.oss_fuzz_dir / "build" / "out" / self.new_project_name
+        compile_out_path.mkdir(parents=True, exist_ok=True)
+        compile_json_path = self.cache_dir / self.project_name / "compile_commands.json"
         workdir = self.docker_tool.run_cmd(["pwd"], timeout=None, volumes=None).strip()
-        volumes = {compile_out_path: {"bind": "/out", "mode": "rw"}, 
+        volumes:dict[str, dict[str, str]] = {str(compile_out_path): {"bind": "/out", "mode": "rw"}, 
                     os.path.join(PROJECT_PATH, "tools"): {"bind": os.path.join(workdir, "tools"), "mode": "ro"}}
 
         if retriver == Retriever.LSP:
             pyfile = "lsp_code_retriever"
             if self.project_lang in [LanguageType.C, LanguageType.CPP]:
                 # the host file must exist for mapping
-                if not os.path.exists(compile_json_path):
+                if not compile_json_path.exists():
                     self.logger.error(f"Error: {compile_json_path} does not exist")
                     return []
-                volumes[compile_json_path] = {"bind": os.path.join(workdir, "compile_commands.json"), "mode": "rw"}
+                volumes[str(compile_json_path)] = {"bind": os.path.join(workdir, "compile_commands.json"), "mode": "rw"}
 
         elif retriver == Retriever.Parser:
             pyfile = "parser_code_retriever"
@@ -114,21 +115,21 @@ class CodeRetriever():
             self.logger.error(f"Error: {retriver} is not supported")
             return []
         
-        cmd_list = ["python", "-m", f"tools.code_tools.{pyfile}",  "--workdir", workdir,  "--lsp-function", lsp_function,
-                     "--symbol-name", symbol_name, "--lang", self.project_lang.upper()]
+        cmd_list:list[str] = ["python", "-m", f"tools.code_tools.{pyfile}",  "--workdir", workdir,  "--lsp-function", lsp_function.value,
+                     "--symbol-name", symbol_name, "--lang", self.project_lang.value]
         
         res_str = self.docker_tool.run_cmd(cmd_list, timeout=60, volumes=volumes)
         self.logger.info(f"Calling {retriver}_code_retriever to get {lsp_function} for {symbol_name}")
        
         # docker run error 
-        if res_str.startswith(DockerResults.Error):
+        if res_str.startswith(DockerResults.Error.value):
             self.logger.error(f"Error in when calling {retriver}_code_retriever: {res_str}")
             return []
 
         # check if the response file is generated
-        file_name = f"{symbol_name}_{lsp_function}_{retriver}.json"
-        save_path = os.path.join(compile_out_path, file_name)
-        if not os.path.exists(save_path):
+        file_name = f"{symbol_name}_{lsp_function.value}_{retriver.value}.json"
+        save_path = compile_out_path / file_name
+        if not save_path.exists():
             self.logger.error(f"Error: {retriver}_code_retriever does not generate the response file: {save_path}")
             return []
         
@@ -138,7 +139,7 @@ class CodeRetriever():
 
         msg, lsp_resp = res_json["message"], res_json["response"]
 
-        if msg.startswith(LSPResults.Error):
+        if msg.startswith(LSPResults.Error.value):
             self.logger.error(f"Error in when calling {retriver}_code_retriever: {msg}")
             return []
         
@@ -150,7 +151,7 @@ class CodeRetriever():
 
 
     @catch_exception
-    def get_symbol_info(self, symbol_name: str, lsp_function: LSPFunction, retriever: str = Retriever.Mixed) -> list[dict]:
+    def get_symbol_info(self, symbol_name: str, lsp_function: LSPFunction, retriever: Retriever = Retriever.Mixed) -> list[dict[str, str]]:
         """
         Retrieves the declaration information of a given symbol using the Language Server Protocol (LSP).
         Args:
@@ -158,6 +159,10 @@ class CodeRetriever():
         Returns:
              list[dict]: [{"source_code":"", "file_path":"", "line":""}]
         """
+
+        # Remove the "struct" or "class" prefix from the symbol name
+        if symbol_name.startswith("struct") or symbol_name.startswith("class"):
+            symbol_name = symbol_name.split(" ")[1]
 
         if retriever == Retriever.Mixed:
             lsp_resp = self.get_symbol_info_retriever(symbol_name, lsp_function, Retriever.LSP)
@@ -184,7 +189,7 @@ class CodeRetriever():
     
 
     @catch_exception
-    def get_symbol_info_retriever(self, symbol_name: str, lsp_function: LSPFunction, retriever: str = Retriever.LSP) -> list[dict]:
+    def get_symbol_info_retriever(self, symbol_name: str, lsp_function: LSPFunction, retriever: Retriever = Retriever.LSP) -> list[dict[str, str]]:
         """
         Retrieves the declaration information of a given symbol using the Language Server Protocol (LSP).
         Args:
@@ -193,9 +198,9 @@ class CodeRetriever():
              list[dict]: [{"source_code":"", "file_path":"", "line":""}]
         """
 
-        save_path = os.path.join(self.cache_dir, self.project_name, f"{symbol_name}_{lsp_function}_{retriever}.json")
+        save_path = self.cache_dir / self.project_name / f"{symbol_name}_{lsp_function.value}_{retriever.value}.json"
         # get the lsp response from the cache if it exists
-        if self.cache_dir and os.path.exists(save_path):
+        if save_path.exists():
             self.logger.info(f"Getting {lsp_function} for {symbol_name} from cache")
             with open(save_path, "r") as f:
                 return json.load(f)
@@ -203,10 +208,8 @@ class CodeRetriever():
         # call the container code retriever
         lsp_resp = self.call_container_code_retriever(symbol_name, lsp_function, retriever)
     
-        if self.cache_dir:
-            if not os.path.exists(f"{self.cache_dir}/{self.project_name}"):
-                os.makedirs(f"{self.cache_dir}/{self.project_name}")
-
+        if self.cache_dir.exists():
+            save_path.parent.mkdir(parents=True, exist_ok=True)
             # TODO: same symbol name
             with open(save_path, "w") as f:
                 json.dump(lsp_resp, f)
@@ -214,11 +217,11 @@ class CodeRetriever():
         return lsp_resp
 
 
-    def get_symbol_header(self, symbol_name: str, retriever: str = Retriever.Mixed) -> str:
+    def get_symbol_header(self, symbol_name: str, retriever: Retriever = Retriever.Mixed) -> str:
         """
         Find the header file path containing the declaration of a specified symbol name.
         Args:
-            symbol_name (str): The name of the symbol to search for.
+            symbol_name (str): The name of the symbol to search for like function name, struct name, class name .. .
         Returns:
             str: If the declaration is found, returns the absolute path to the header file.
                  If no declaration is found, returns None.
@@ -236,20 +239,20 @@ class CodeRetriever():
             if len(declaration) > 1:
                 self.logger.warning(f"Multiple declaration found for {new_symbol_name}, please check the symbol name")
 
-                all_headers = set()
+                header_set: set[str] = set()
                 for decl in declaration:
-                    all_headers.add(decl["file_path"])
+                    header_set.add(decl["file_path"])
                 
-                all_headers = "\n".join(all_headers)
+                all_headers = "\n".join(header_set)
                 return all_headers
             elif len(declaration) == 1:
                 absolute_path = declaration[0]["file_path"]
                 return absolute_path
             
         self.logger.warning(f"No such symbol: {symbol_name} found!")
-        return LSPResults.NoResult # No declaration found
+        return LSPResults.NoResult.value # No declaration found
 
-    def get_symbol_declaration(self, symbol_name, retriever: str = Retriever.Mixed):
+    def get_symbol_declaration(self, symbol_name: str, retriever: Retriever = Retriever.Mixed) -> list[dict[str, str]]:
         """
         Get the declaration of a symbol from the project.
         Args:
@@ -268,7 +271,7 @@ class CodeRetriever():
         # handle multiple declaration
         return declaration
 
-    def get_symbol_definition(self, symbol_name, retriever: str = Retriever.Mixed):
+    def get_symbol_definition(self, symbol_name: str, retriever: Retriever = Retriever.Mixed) -> list[dict[str, str]]:
         """
         Retrieves the definition(s) for a specified symbol using LSP.
         Args:
@@ -286,11 +289,25 @@ class CodeRetriever():
               'file_path': '/src/cJSON.c',
               'line': 120}]
         """
+        # limit the code length to 50 lines
+        res = self.get_symbol_info(symbol_name, LSPFunction.Definition, retriever)
+        if len(res) > 1:
+            self.logger.warning(f"Multiple definition found for {symbol_name}, please check the symbol name")
+        elif len(res) == 0:
+            self.logger.warning(f"No definition found for {symbol_name}, please check the symbol name")
+            return []
+        
+        source_code = res[0]["source_code"]
+        # only keep the first 50 lines
+        source_code_lines = source_code.split("\n")
+        source_code = "\n".join(source_code_lines[:50])
+        return [{
+            "source_code": source_code,
+            "file_path": res[0]["file_path"],
+            "line": res[0]["line"]
+        }]
 
-
-        return self.get_symbol_info(symbol_name, LSPFunction.Definition, retriever)
-
-    def get_symbol_references(self, symbol_name, retriever: str = Retriever.Mixed):
+    def get_symbol_references(self, symbol_name: str, retriever: Retriever = Retriever.Parser) -> list[dict[str, str]]:
         """
         Get references to a symbol across all workspace files.
         Args:
@@ -309,7 +326,3 @@ class CodeRetriever():
         """
 
         return self.get_symbol_info(symbol_name, LSPFunction.References, retriever)
-
-
-
-  

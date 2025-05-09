@@ -429,25 +429,24 @@ from tools.fuzz_tools.compiler import Compiler
 from pathlib import Path
 from constants import CompileResults, LanguageType
 import random
-import shutil
 from utils.oss_fuzz_utils import OSSFuzzUtils
 from utils.docker_utils import DockerUtils
 from utils.misc import extract_name
 
 
 class SemaCheck():
-    def __init__(self, oss_fuzz_dir, project_name, new_project_name, func_name, project_lang):
+    def __init__(self, oss_fuzz_dir: Path, project_name: str, new_project_name: str, func_name: str, project_lang: LanguageType):
         self.oss_fuzz_dir = oss_fuzz_dir
         self.project_name = project_name
         self.new_project_name = new_project_name
         self.func_name = func_name
         self.docker_tool = DockerUtils(oss_fuzz_dir, project_name, new_project_name, project_lang)
         
-    def check(self, harness_code,  fuzzer_path, fuzzer_name):
+    def check(self, harness_code: str,  fuzzer_path: Path, fuzzer_name: str) -> bool:
         
         if self.func_name in checker_list.keys():
 
-            def dotestfunc(testcase):
+            def dotestfunc(testcase: str):
 
                 # sh -c for shell command
                 cmd = ["sh", "-c", f"echo -n {testcase} > testcase && ./{fuzzer_name} testcase -runs=1"]
@@ -478,7 +477,21 @@ class SemaCheck():
             # No need to check
             return True
         
-     
+    def clean_workspace(self):
+        '''Clean the workspace'''
+        try:        
+            # first remove the out directory
+            self.docker_tool.clean_build_dir()
+            # remove the docker image here
+            self.docker_tool.remove_image()
+            # remove the project directory
+            shutil.rmtree(os.path.join(self.oss_fuzz_dir, "projects", self.new_project_name))
+            # clean the build directory
+            shutil.rmtree(os.path.join(self.oss_fuzz_dir, "build", "out", self.new_project_name))
+
+        except:
+            pass
+
 if __name__ == '__main__':
     from pathlib import Path
 

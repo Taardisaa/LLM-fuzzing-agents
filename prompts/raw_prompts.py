@@ -135,7 +135,8 @@ Based on the above information, fix the code. Must provide the full fixed code.
 INIT_PROMPT = '''
 
 // Write a fuzz driver in {project_lang} language for the given function. Output the full harness code.
-
+// Using absolute path when including project header file.
+// Do not fake the struct or class definition, use the one provided by the tool.
 // @ examples of API usage
 {function_usage}
 

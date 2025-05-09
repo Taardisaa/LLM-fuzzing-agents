@@ -1,13 +1,13 @@
 import json
 import os
-from urllib.parse import unquote, urlparse
 import argparse
 import subprocess as sp
 import random
-from tools.code_tools.parsers.c_parser import CParser
+from tools.code_tools.parsers.c_cpp_parser import CCPPParser
 from tools.code_tools.parsers.java_parser import JavaParser
 from constants import LanguageType, LSPFunction, LSPResults
-
+from pathlib import Path
+from typing import Any
 
 class ParserCodeRetriever():
     def __init__(self, workdir: str,  project_lang: LanguageType, symbol_name: str, lsp_function: LSPFunction, max_try: int = 100):
@@ -21,13 +21,13 @@ class ParserCodeRetriever():
     
     def get_language_parser(self):
         if self.project_lang in [LanguageType.C, LanguageType.CPP]:
-            return CParser
+            return CCPPParser
         elif self.project_lang == LanguageType.JAVA:
             return JavaParser
         else:
             raise Exception(f"Language {self.project_lang} not supported.")
     
-    def fetch_code(self, file_path: str, lineno: int, charpos: int) -> list[dict]:
+    def fetch_code(self, file_path: str, lineno: int, charpos: int) -> list[dict[str, Any]]:
         """
         Find the definition of a symbol in a C or C++ file using Clangd LSP.
         Args:
@@ -40,8 +40,8 @@ class ParserCodeRetriever():
             Exception: If there is an error during the request to the LSP server.
         """
         # cpp for C++
-        ret_list = []
-        parser = self.lang_parser(file_path, source_code=None, project_lang=self.project_lang)
+        ret_list:list[dict[str, Any]] = []
+        parser = self.lang_parser(Path(file_path), source_code=None, project_lang=self.project_lang)
         if self.lsp_function == LSPFunction.References:
             # get the full source code of the symbol
             source_code = parser.get_ref_source(self.symbol_name, lineno)
@@ -55,7 +55,7 @@ class ParserCodeRetriever():
 
         return ret_list
 
-    def get_symbol_info(self) -> list[dict]:
+    def get_symbol_info(self) -> tuple[str, list[dict[str, Any]]]:
         """
         Finds information about a given symbol in the project.
         This method searches for the specified symbol within the project directory
@@ -75,14 +75,14 @@ class ParserCodeRetriever():
         output = results.stdout.strip()
 
         if not output:
-            return []
+            return LSPResults.NoResult.value, []
 
         # the location may be in the comments or in the string literals
         # find the file path, line number and character position
         all_lines = output.splitlines()
 
         # filter some files by file type
-        filtered_lines = []
+        filtered_lines: list[tuple[str, int, int]] = []
         for line in all_lines:
             
             parts = line.split(':', 2)
@@ -111,8 +111,8 @@ class ParserCodeRetriever():
         # shuffle the list to get random files
         random.shuffle(filtered_lines)
 
-        final_resp = []
-        all_source_code = []
+        final_resp: list[dict[str, Any]] = []
+        all_source_code:list[str] = []
 
         for file_path, lineno, char_pos in filtered_lines[:self.max_try]:
             print("file_path:{}, lineno:{}, char_pos:{}".format(file_path, lineno, char_pos))
@@ -126,24 +126,25 @@ class ParserCodeRetriever():
             except Exception as e:
                 return f"{LSPResults.Error}: {e}", []
         
-        return LSPResults.Success, final_resp
+        return LSPResults.Success.value, final_resp
     
 def main():
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('--workdir', type=str, default="/src/", help='The search directory.')
-    parser.add_argument('--lsp-function', type=str, choices=[LSPFunction.Definition, LSPFunction.Declaration, LSPFunction.References, LSPFunction.Header], help='The LSP function name')
+    parser.add_argument('--lsp-function', type=str, choices=[e.value for e in LSPFunction], help='The LSP function name')
     parser.add_argument('--symbol-name', type=str, help='The function name or struct name.')
-    parser.add_argument('--lang', type=str, choices=[LanguageType.C, LanguageType.CPP,  LanguageType.JAVA], help='The project language.')
+    parser.add_argument('--lang', type=str, choices=[e.value for e in LanguageType], help='The project language.')
     args = parser.parse_args()
+    
 
+    lsp = ParserCodeRetriever(args.workdir, LanguageType(args.lang), args.symbol_name, LSPFunction(args.lsp_function))
     try:
-        lsp = ParserCodeRetriever(args.workdir, args.lang, args.symbol_name, args.lsp_function)
         msg, res = lsp.get_symbol_info()
     except Exception as e:
         msg = f"{LSPResults.Error}: {e}"
         res = []
 
-    file_name = f"{lsp.symbol_name}_{lsp.lsp_function}_parser.json"
+    file_name = f"{lsp.symbol_name}_{lsp.lsp_function.value}_parser.json"
     with open(os.path.join("/out", file_name), "w") as f:
         f.write(json.dumps({"message": msg, "response": res}, indent=4))
 

@@ -1,4 +1,5 @@
 import os
+from enum import Enum
 
 PROJECT_PATH = os.path.dirname(os.path.abspath(__file__))
 # print(PROJECT_PATH)
@@ -6,7 +7,7 @@ PROJECT_PATH = os.path.dirname(os.path.abspath(__file__))
 ALL_FILE_EXTENSION = ["c", "cpp", "java", "py", "cc", "cxx"]
 ALL_HEADER_EXTENSION = ["h", "hpp", "hh"]
 
-class LSPResults():
+class LSPResults(Enum):
     """Results of Language Server Protocol."""
     Success = "success"
     Error = "error"
@@ -14,37 +15,37 @@ class LSPResults():
     NoResult = "no result"
     DockerError = "docker error"
 
-class DockerResults():
+class DockerResults(Enum):
     Success = "success"
     Error = "docker error"
 
-class Retriever:
+class Retriever(Enum):
     LSP = "lsp"
     Parser = "parser"
     Mixed = "mixed"
 
 
-class LanguageType():
+class LanguageType(Enum):
     """File types of target files."""
     C = 'C'
     CPP = 'CPP'
     JAVA = 'Java'
     NONE = ''
 
-class LSPFunction():
+class LSPFunction(Enum):
     Definition = "definition"
     Declaration = "declaration"
     References = "references"
     Header = "header"
 
-class CompileResults:
+class CompileResults(Enum):
     Success = "Complie Success"
     CodeError = "Compile Error"
     FuzzerError = "No Fuzzer"
     ImageError = "Build Image Error"
 
 
-class FuzzResult:
+class FuzzResult(Enum):
     NoError = "No Error"
     Crash = "Crash"
     RunError = "Run Error"
@@ -53,12 +54,12 @@ class FuzzResult:
     LackCovError = "Lack initial coverage or the final done coverage"
 
 
-class ToolDescMode():
+class ToolDescMode(Enum):
     Simple = "simple"
     Detailed = "detailed"
 
 
-class CodeSearchAPIName():
+class CodeSearchAPIName(Enum):
     """APIs for searching code snippets."""
     Github = "Github"
     # Google = "Google"
@@ -67,7 +68,7 @@ class CodeSearchAPIName():
     # CodeSearch = "CodeSearch"
     # 
 # Entry function for fuzzing.
-FuzzEntryFunctionMapping = {
+FuzzEntryFunctionMapping: dict[LanguageType, str] = {
     LanguageType.C: "LLVMFuzzerTestOneInput",
     LanguageType.CPP: "LLVMFuzzerTestOneInput",
     LanguageType.JAVA: "fuzzerTestOneInput",

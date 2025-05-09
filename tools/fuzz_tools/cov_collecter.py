@@ -1,21 +1,20 @@
 import os
-import subprocess as sp
-import re
-from tools.fuzz_tools.log_parser import FuzzLogParser
 from tools.fuzz_tools.compiler import Compiler
 from utils.docker_utils import DockerUtils
-from utils.misc import extract_name
-from constants import FuzzResult, PROJECT_PATH, CompileResults, COV_WRAP_FILE_NAME, LanguageType, FuzzEntryFunctionMapping
-from tools.code_tools.parsers.c_parser import CParser
+from constants import PROJECT_PATH, CompileResults, COV_WRAP_FILE_NAME, LanguageType, FuzzEntryFunctionMapping
+from tools.code_tools.parsers.c_cpp_parser import CCPPParser
 from tools.code_tools.parsers.java_parser import JavaParser
 from pathlib import Path
 import json
 import shutil
-
+import logging
+from typing import Optional
 
 class CovCollector():
 
-    def __init__(self, oss_fuzz_dir: str, project_name: str, new_project_name: str, project_lang: LanguageType, logger=None):
+    def __init__(self, oss_fuzz_dir: Path, project_name: str, new_project_name: str,
+                  project_lang: LanguageType, logger:Optional[logging.Logger]) -> None:
+        
         self.logger = logger
         
         self.oss_fuzz_dir = oss_fuzz_dir
@@ -27,7 +26,7 @@ class CovCollector():
 
     def get_language_parser(self):
         if self.project_lang in [LanguageType.C, LanguageType.CPP]:
-            return CParser
+            return CCPPParser
         elif self.project_lang == LanguageType.JAVA:
             return JavaParser
         else:
@@ -35,7 +34,7 @@ class CovCollector():
         
     def gen_wrapped_code(self, harness_code: str, function_name: str) -> str:
         # add the wrapper code to the harness code
-        wrap_file = Path(f"{PROJECT_PATH}/tools/fuzz_tools/{COV_WRAP_FILE_NAME}_{self.project_lang.lower()}.txt")
+        wrap_file = Path(f"{PROJECT_PATH}/tools/fuzz_tools/{COV_WRAP_FILE_NAME}_{self.project_lang.value.lower()}.txt")
         if not wrap_file.exists():
             print(f"Wrapper file {wrap_file} does not exist")
             return harness_code
@@ -44,7 +43,7 @@ class CovCollector():
         
         # find the fuzz entry
         parser = self.parser(None, harness_code, self.project_lang)
-        fuzz_node = parser.get_fuzz_function_pos(function_name)
+        fuzz_node = parser.get_fuzz_function_node(function_name)
         if fuzz_node:
             fuzz_start_row, fuzz_start_col, fuzz_end_row = fuzz_node.start_point.row, fuzz_node.start_point.column, fuzz_node.end_point.row
         else:
@@ -63,7 +62,7 @@ class CovCollector():
 
         # insert the wrapper code before the fuzz entry
         entry_function = FuzzEntryFunctionMapping[self.project_lang]
-        entry_node = parser.find_definition_node(entry_function)
+        entry_node = parser.get_definition_node(entry_function)
         if not entry_node:
             raise Exception(f"Entry function {entry_function} not found")
         
@@ -73,7 +72,7 @@ class CovCollector():
         return harness_code
 
 
-    def recompile(self, harness_code,  harness_path, fuzzer_name, function_name) -> bool:
+    def recompile(self, harness_code: str,  harness_path: Path, fuzzer_name: str, function_name: str) -> bool:
         if self.project_lang in [LanguageType.C, LanguageType.CPP]:
             wrapped_code = self.gen_wrapped_code(harness_code, function_name)
         else:
@@ -107,7 +106,7 @@ class CovCollector():
 
     # ./inchi_input_fuzzer -print_coverage=1 -runs=1  -timeout=100  ./corpora/ 2>&1 | grep inchi_dll.c | grep -w COVERED_FUNC | grep {}
     # ls -ltr
-    def collect_coverage(self, harness_code, harness_path, fuzzer_name: str,
+    def collect_coverage(self, harness_code: str, harness_path: Path, fuzzer_name: str,
                           function_name: str, corpora_dir: Path) -> tuple[int, int, bool]:
 
         flag = self.recompile(harness_code, harness_path, fuzzer_name, function_name)

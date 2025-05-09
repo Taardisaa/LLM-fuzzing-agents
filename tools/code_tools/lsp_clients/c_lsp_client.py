@@ -1,9 +1,9 @@
 import json
 import os
-import subprocess as sp
 from tools.code_tools.lsp_clients.clspclient_raw import ClangdLspClient
-from constants import LanguageType, LSPFunction, LSPResults
-
+from constants import LanguageType, LSPFunction
+from typing import Any
+from pathlib import Path
 
 class CLSPCLient():
     def __init__(self, workdir: str,  project_lang: LanguageType):
@@ -13,7 +13,7 @@ class CLSPCLient():
         self.project_lang = project_lang
       
 
-    async def request_fucntion(self, file_path: str, lineno: int, charpos: int, lsp_function: LSPFunction) -> list[dict]:
+    async def request_fucntion(self, file_path: str, lineno: int, charpos: int, lsp_function: LSPFunction) -> list[dict[str, Any]]:
         """
         Find the definition of a symbol in a C or C++ file using Clangd LSP.
         Args:
@@ -26,7 +26,7 @@ class CLSPCLient():
             Exception: If there is an error during the request to the LSP server.
         """
         # cpp for C++
-        client = ClangdLspClient(self.project_root, self.project_lang.lower())
+        client = ClangdLspClient(self.project_root, self.project_lang.value.lower())
         await client.start_server()
         await client.initialize()
         await client.start_server()
@@ -82,22 +82,22 @@ class CLSPCLient():
         # to keep the same format as multi_lsp_client.py
         return response.get("result", [])
     
-    async def request_definition(self, file_path: str, lineno: int, charpos: int) -> list[dict]:
+    async def request_definition(self, file_path: str, lineno: int, charpos: int) -> list[dict[str, Any]]:
         res = await self.request_fucntion(file_path, lineno, charpos, LSPFunction.Definition)
         return res
-    async def request_declaration(self, file_path: str, lineno: int, charpos: int) -> list[dict]:
+    async def request_declaration(self, file_path: str, lineno: int, charpos: int) -> list[dict[str, Any]]:
         res = await self.request_fucntion(file_path, lineno, charpos, LSPFunction.Declaration)
         return res
-    async def request_references(self, file_path: str, lineno: int, charpos: int) -> list[dict]:
+    async def request_references(self, file_path: str, lineno: int, charpos: int) -> list[dict[str, Any]]:
         res = await self.request_fucntion(file_path, lineno, charpos, LSPFunction.References)
         return res
-    async def request_header(self, file_path: str, lineno: int, charpos: int) -> list[dict]:
+    async def request_header(self, file_path: str, lineno: int, charpos: int) -> list[dict[str, Any]]:
         res = await self.request_fucntion(file_path, lineno, charpos, LSPFunction.Header)
         return res
 
-    async def request_workspace_symbols(self, symbol) -> list[tuple[str, int, int]]:
+    async def request_workspace_symbols(self, symbol: str) -> list[tuple[str, int, int]]:
      
-        client = ClangdLspClient(self.project_root, self.project_lang.lower())
+        client = ClangdLspClient(self.project_root, self.project_lang.value.lower())
         await client.start_server()
         await client.initialize()
         
@@ -105,18 +105,19 @@ class CLSPCLient():
         with open(f"{self.project_root}/compile_commands.json", "r") as f:
             compile_commands = json.load(f)
 
+        random_file: Path = Path("")
         # randomly select a file from the compile_commands.json
         for i in range(len(compile_commands)):
-            random_file = os.path.join(compile_commands[i]["directory"], compile_commands[i]["file"])
-            random_file = os.path.abspath(random_file)
+            random_file = Path(compile_commands[i]["directory"]) / compile_commands[i]["file"]
+            random_file = random_file.absolute()
             if os.path.exists(random_file):
                 break
 
-        if not os.path.exists(random_file):
+        if not random_file.exists():
             return []
         
         # have to open a file first
-        await client.open_file(random_file)
+        await client.open_file(str(random_file))
 
         #  Waiting for clangd to index files
         await client.wait_for_indexing(timeout=5)
@@ -134,7 +135,7 @@ class CLSPCLient():
         if not result:
             return []
         
-        all_location = []
+        all_location: list[tuple[str, int, int]] = []
         for res in result:
 
             # Important, LSP will return symbols including the symbol name 
