@@ -1,18 +1,17 @@
 from pathlib import Path
 import json
 from  tools.example_selection import LLMSelector
-from typing import Optional
 import tiktoken
+from typing import Any
 
 enc = tiktoken.encoding_for_model("gpt-4o")
-def replace_cached_example(cache_dir: str, llm_name: Optional[str] = "gpt-4"):
-    cache_dir = Path(cache_dir)
+def replace_cached_example(cache_dir: Path, llm_name:str = "gpt-4"):
 
     for project_dir in cache_dir.iterdir():
         if not project_dir.is_dir():
             continue
         
-        if project_dir.name != "kamailio":
+        if project_dir.name != "bind9":
             continue
 
         for json_file in project_dir.iterdir():
@@ -32,7 +31,7 @@ def replace_cached_example(cache_dir: str, llm_name: Optional[str] = "gpt-4"):
             function_name = "_".join(function_list)
             llm_selector = LLMSelector(llm_name)
             
-            res_list = []            
+            res_list:list[dict[str, Any]] = []            
             for example_json in json_data:
                 
                 source_code = example_json["source_code"]
@@ -57,4 +56,4 @@ def replace_cached_example(cache_dir: str, llm_name: Optional[str] = "gpt-4"):
 if __name__ == "__main__":
     # Example usage
     cache_dir = "/home/yk/code/LLM-reasoning-agents/cache"
-    replace_cached_example(cache_dir, llm_name="gpt-4-0613")
+    replace_cached_example(Path(cache_dir), llm_name="gpt-4-0613") 

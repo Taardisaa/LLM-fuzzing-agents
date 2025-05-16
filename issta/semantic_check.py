@@ -88,7 +88,7 @@ class igraph_edge_connectivity_Checker(SemanticTester):
 class stun_is_response_Checker(SemanticTester):
     funcsig = 'stun_is_response'
     check_func = '''
-int check_stun_is_response(const stun_buffer * arg1) {
+bool check_stun_is_response(const stun_buffer * arg1) {
     printf("SEMA-CHECK-CONTENT:");
     for (size_t i = 0; i < arg1->len; ++i) {
         printf("%c", (uint8_t)arg1->buf[i]);
@@ -100,7 +100,7 @@ int check_stun_is_response(const stun_buffer * arg1) {
     return 0;
 }
 '''
-    check_func_decl = 'extern int check_stun_is_response(const stun_buffer * arg1);'
+    check_func_decl = 'extern bool check_stun_is_response(const stun_buffer * arg1);'
     testcases = [ 'A' * 8, 'A' * 8 + '\0', 'A' * 16, 'A' * 16 + '\0', 'A' * 64, 'A' * 64 + '\0' ]
     main_func = SemanticTester.main_func
 

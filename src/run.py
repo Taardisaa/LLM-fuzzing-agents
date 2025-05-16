@@ -130,7 +130,7 @@ class Runner:
                     project_name = key
                     print(f"{i+1}th of functions in {key}: {len(function_dict[key])}")
                     
-                    pool.apply(Runner.run_one, args=(
+                    pool.apply_async(Runner.run_one, args=(
                         self.n_examples, self.example_mode, self.model_name, self.oss_fuzz_dir, 
                         project_name, function_signature, self.usage_token_limit, 
                         self.model_token_limit, self.run_time, self.max_fix, self.max_tool_call, self.clear_msg_flag,

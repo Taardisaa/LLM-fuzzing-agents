@@ -1,7 +1,4 @@
-from tools.fuzz_tools.cov_collecter import CovCollector
-from tools.fuzz_tools.compiler import Compiler
 from pathlib import Path
-from constants import CompileResults, LanguageType
 import random
 import shutil
 from utils.oss_fuzz_utils import OSSFuzzUtils
@@ -11,6 +8,7 @@ function_harness_mapping = {
 "stun_is_binding_response":("FuzzStunClient", "/src/coturn/fuzzing/FuzzStunClient.c"),
 "stun_is_command_message":("FuzzStunClient", "/src/coturn/fuzzing/FuzzStunClient.c"),
 "stun_is_success_response":("FuzzStunClient", "/src/coturn/fuzzing/FuzzStunClient.c"),
+"stun_is_response":("FuzzStunClient", "/src/coturn/fuzzing/FuzzStunClient.c"),
 "policydb_read": ("binpolicy-fuzzer","/src/selinux/libsepol/fuzz/binpolicy-fuzzer.c"),
 "cil_compile": ("binpolicy-fuzzer","/src/selinux/libsepol/fuzz/binpolicy-fuzzer.c"),
 }
@@ -30,6 +28,7 @@ def test_one(oss_fuzz_dir: Path, project_name: str, harness_file: Path, function
     else:
         project_fuzzer_name, project_harness_path  = oss_tool.get_harness_and_fuzzer()
 
+    project_harness_path = Path(project_harness_path)
     shutil.copytree(scr_path, dst_path, dirs_exist_ok=True)
     project_lang = oss_tool.get_project_language()
     checker = SemaCheck(oss_fuzz_dir, project_name, new_project_name, function_name, project_lang)
@@ -39,7 +38,7 @@ def test_one(oss_fuzz_dir: Path, project_name: str, harness_file: Path, function
     return res 
 
 
-def test_single(oss_fuzz_dir, save_dir):
+def test_single(oss_fuzz_dir: Path, save_dir: Path):
     log_file = save_dir / "agent.log"
     log_content = log_file.read_text()
 
@@ -50,7 +49,7 @@ def test_single(oss_fuzz_dir, save_dir):
     project_name = save_dir.name.split("_")[0]
     if project_name == "libpg":
         project_name = "libpg_query"
-    harness_file = save_dir / "harness.txt"
+    harness_file = save_dir / "draft_fix1.txt"
 
     function_signature = (save_dir / "function.txt").read_text()
     function_name = extract_name(function_signature)
@@ -81,10 +80,10 @@ def test_all():
 
 if __name__ == "__main__":
 
-    test_all()
-    exit(0)
+    # test_all()
+    # exit(0)
     oss_fuzz_dir = Path("/home/yk/code/oss-fuzz/")
-    res_path = Path("/home/yk/code/LLM-reasoning-agents/outputs/issta_no_test_apr22/issta1/civetweb_mg_get_response_xgqerhvrxombkmtf")
+    res_path = Path("/home/yk/code/LLM-reasoning-agents/outputs/issta_rest/issta1/coturn_stun_is_response_zcqniswmreqvfgix")
 
     flag = test_single(oss_fuzz_dir, res_path)
     print("Semantic check res: ", flag)

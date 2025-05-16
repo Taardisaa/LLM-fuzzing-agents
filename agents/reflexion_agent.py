@@ -205,7 +205,7 @@ class CompilerWraper(Compiler):
 
                 if not self.is_link_error(error_msg, harness_path):
                     # save raw error message
-                    return {"messages": ("user", compile_res), "build_msg": error_msg, "fuzzer_name": fuzzer_name, "fuzzer_path": harness_path}
+                    return {"messages": ("user", compile_res.value), "build_msg": error_msg, "fuzzer_name": fuzzer_name, "fuzzer_path": harness_path}
                 else:
                     # link error, try next harness
                     self.logger.error(f"Link Error for draft_fix{fix_count} using {fuzzer_name}, Now try another harness file.")
@@ -213,7 +213,7 @@ class CompilerWraper(Compiler):
 
             # compile success
             else:
-                return {"messages": ("user", compile_res), "build_msg": all_msg, "fuzzer_name": fuzzer_name, "fuzzer_path": harness_path}
+                return {"messages": ("user", compile_res.value), "build_msg": all_msg, "fuzzer_name": fuzzer_name, "fuzzer_path": harness_path}
                 
         return {"messages": ("user", END + "Link Error, tried all harness")}
 
@@ -242,13 +242,13 @@ class FixerPromptBuilder:
         if fix_counter == 0 or self.clear_msg_flag:
             # clear previous messages, need to build the fix prompt based on the provided template 
             state["messages"].clear()
-            if last_message.startswith(CompileResults.CodeError):
+            if last_message.startswith(CompileResults.CodeError.value):
                 fix_prompt = self.build_compile_prompt(state["harness_code"], state["build_msg"])
             else:
                 fix_prompt = self.build_fuzz_prompt(state["harness_code"], state["fuzz_msg"])
         else:
             # keep the previous messages, just add the error message
-            if last_message.startswith(CompileResults.CodeError):
+            if last_message.startswith(CompileResults.CodeError.value):
                 fix_prompt = "Complie Error Messages:\n" + state["build_msg"]
             else:
                 fix_prompt = "Fuzz Error Messages:\n" + state["fuzz_msg"]
@@ -350,7 +350,7 @@ class FuzzState(TypedDict):
     fuzz_msg: str
     fix_counter: int
     fuzzer_name: str
-    fuzzer_path: str
+    fuzzer_path: Path
 
 
 class AgentFuzzer():
@@ -609,13 +609,21 @@ class AgentFuzzer():
     def cahche_harness_fuzzer_pairs(self)-> dict[str, Path]:
         '''Cache the harness and fuzzer pairs'''
 
+        def to_path(harness_fuzzer_dict: dict[str, str]) -> dict[str, Path]:
+            '''Convert the harness_fuzzer_dict to the correct type'''
+                    # translate dict to the correct type
+            new_harness_fuzzer_dict: dict[str, Path] = {}
+            for key, value in harness_fuzzer_dict.items():
+                new_harness_fuzzer_dict[key] = Path(value)
+            return new_harness_fuzzer_dict
+        
+
         json_path = self.cache_dir / self.project_name / "harness_fuzzer_pairs.json"
         if json_path.exists():
             with open(json_path, 'r') as f:
                 harness_fuzzer_dict = json.load(f)
                 self.logger.info(f"Using Cached harness_fuzzer_pairs.json, content:{harness_fuzzer_dict}")
-                return harness_fuzzer_dict
-
+                return to_path(harness_fuzzer_dict)
 
         fuzzer_list = self.find_fuzzers()
         harness_fuzzer_dict = self.find_harnesses(fuzzer_list)
@@ -625,12 +633,8 @@ class AgentFuzzer():
             json.dump(harness_fuzzer_dict, f)
 
         self.logger.info(f"Create harness_fuzzer_pairs.json, content:{harness_fuzzer_dict}")
-        
-        # translate dict to the correct type
-        new_harness_fuzzer_dict: dict[str, Path] = {}
-        for key, value in harness_fuzzer_dict.items():
-            new_harness_fuzzer_dict[key] = Path(value)
-        return new_harness_fuzzer_dict
+
+        return to_path(harness_fuzzer_dict)
 
     def clean_workspace(self):
         '''Clean the workspace'''
@@ -660,9 +664,9 @@ class AgentFuzzer():
         last_message = state["messages"][-1]
 
         # print(messages)
-        if last_message.content == CompileResults.Success:
+        if last_message.content == CompileResults.Success.value:
             return self.FuzzerNode
-        elif last_message.content == CompileResults.CodeError:
+        elif last_message.content == CompileResults.CodeError.value:
             return self.FixBuilderNode
         else:
             return END
@@ -694,7 +698,7 @@ class AgentFuzzer():
         last_message = state["messages"][-1]
 
         # print(messages)
-        if last_message.content.startswith(FuzzResult.NoError):
+        if last_message.content.startswith(FuzzResult.NoError.value):
             return END
         elif last_message.content.startswith(END):
             return END

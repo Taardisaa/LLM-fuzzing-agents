@@ -182,13 +182,13 @@ class FixerPromptBuilder:
         if fix_counter == 0 or self.clear_msg_flag:
             # clear previous messages, need to build the fix prompt based on the provided template 
             state["messages"].clear()
-            if last_message.startswith(CompileResults.CodeError):
+            if last_message.startswith(CompileResults.CodeError.value):
                 fix_prompt = self.build_compile_prompt(state["harness_code"], state["build_msg"])
             else:
                 fix_prompt = self.build_fuzz_prompt(state["harness_code"], state["fuzz_msg"])
         else:
             # keep the previous messages, just add the error message
-            if last_message.startswith(CompileResults.CodeError):
+            if last_message.startswith(CompileResults.CodeError.value):
                 fix_prompt = "Complie Error Messages:\n" + state["build_msg"]
             else:
                 fix_prompt = "Fuzz Error Messages:\n" + state["fuzz_msg"]
@@ -326,7 +326,7 @@ class ISSTAFuzzer(AgentFuzzer):
         #TODO only include function header may not be enough
         header = retriever.get_symbol_header(function_name)
 
-        if header == LSPResults.NoResult:
+        if header == LSPResults.NoResult.value:
             self.logger.warning(f"No header found for {function_name}, Exit")
             self.eailier_stop_flag = True
             return ""
@@ -375,7 +375,7 @@ class ISSTAFuzzer(AgentFuzzer):
         last_message = state["messages"][-1]
 
         # print(messages)
-        if last_message.content.startswith(FuzzResult.NoError):
+        if last_message.content.startswith(FuzzResult.NoError.value):
             return self.SemanticCheckNode
         elif last_message.content.startswith(END):
             return END
