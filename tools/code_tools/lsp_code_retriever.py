@@ -34,7 +34,23 @@ class LSPCodeRetriever():
         else:
             return MultilspyClient(self.project_root, self.project_lang) 
         
-    def fetch_code(self, response: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def fectch_code(self, file_path: str, lineno: int, lsp_function: LSPFunction) -> list[dict[str, Any]]:
+
+        query_key = ""
+        start_line = 0
+        parser = self.lang_parser(Path(file_path), source_code=None, project_lang=self.project_lang)
+        if lsp_function == LSPFunction.References:
+            # get the full source code of the symbol
+            source_code = parser.get_ref_source(self.symbol_name, lineno) # type: ignore
+        else:
+            query_key, source_code, start_line = parser.get_symbol_source(self.symbol_name, lineno, lsp_function)
+
+        if source_code:
+            return [{"source_code": source_code, "file_path": file_path, "line": lineno, "type": query_key, "start_line": start_line}]
+
+        return []
+
+    def fectch_code_from_response(self, response: list[dict[str, Any]], lsp_function: LSPFunction) -> list[dict[str, Any]]:
         """
         Convert the response from clangd to a source code.
         Args:
@@ -53,15 +69,8 @@ class LSPCodeRetriever():
             file_path = loc.get("uri", "").replace("file://", "")
             range_start = loc['range']['start']
 
-            parser = self.lang_parser(Path(file_path), source_code=None, project_lang=self.project_lang)
-            if self.lsp_function == LSPFunction.References:
-                # get the full source code of the symbol
-                source_code = parser.get_ref_source(self.symbol_name, range_start['line'])
-            else:
-                source_code = parser.get_symbol_source(self.symbol_name, range_start['line'], self.lsp_function)
-
-            if source_code:
-                ret_list.append({"source_code": source_code, "file_path": file_path, "line": range_start['line']})
+            source_dict = self.fectch_code(file_path, range_start['line'], lsp_function)
+            ret_list += source_dict 
 
         return ret_list
 
@@ -79,29 +88,30 @@ class LSPCodeRetriever():
         """
         
         response = []
-        if self.lsp_function == LSPFunction.Header:
-            # Find declaration
-            response = await self.lsp_client.request_declaration(file_path, lineno=lineno, charpos=charpos)
-            
-            if not response:
-                return []
-            
-            ret_list: list[dict[str, Any]] = []
-            for loc in response:
-                file_path = loc.get("uri", "").replace("file://", "")
-                # head file doesn't need the source code, it's hard to parse the source code cause the sambol is very different 
-                ret_list.append({"source_code": "", "file_path": file_path, "line": loc['range']['start']['line']})
-            return ret_list
         # Find declaration
-        elif self.lsp_function == LSPFunction.Declaration:
+        # for C/C++, the lsp is very strange, if the symbol already is the declaration, request_declaration will return the definition
+        # if the symbol is already a definition, definition will return the declaration
+        # this will cause the parser to fail to find the declaration or the definition, so we also need to parser the symbol location to make sure
+        # we get the correct declaration or definition, this may return multiple definitions for rare cases like "typdef struct"
+
+        if self.lsp_function == LSPFunction.Declaration:
             response = await self.lsp_client.request_declaration(file_path, lineno=lineno, charpos=charpos)
+            resp_list =  self.fectch_code_from_response(response, self.lsp_function)
+            resp_list += self.fectch_code(file_path, lineno, self.lsp_function)
+            return resp_list
+    
         elif self.lsp_function == LSPFunction.Definition:
             response = await self.lsp_client.request_definition(file_path, lineno=lineno, charpos=charpos)
+            
+            resp_list =  self.fectch_code_from_response(response, self.lsp_function)
+            resp_list += self.fectch_code(file_path, lineno, self.lsp_function)
+            return resp_list
+        
         elif self.lsp_function == LSPFunction.References:
             response = await self.lsp_client.request_references(file_path, lineno=lineno, charpos=charpos)
-
-        
-        return self.fetch_code(response)
+            return self.fectch_code_from_response(response, self.lsp_function)
+        else:
+            raise Exception(f"Unsupported LSP function: {self.lsp_function}")
 
     async def find_all_symbols(self) -> tuple[str, list[tuple[str, int, int]]]:
         

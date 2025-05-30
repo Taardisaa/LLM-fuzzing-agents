@@ -88,6 +88,19 @@ def load_pormpt_template(template_path: str) -> str:
         return file.read()
 
 
+def add_lineno_to_code(code: str, start_lineno: int) -> str:
+    """
+    Add line numbers to the code string.
+    Args:
+        code (str): The source code to add line numbers to.
+        lineno (int): The starting line number (0-indexed).
+    Returns:
+        str: The code with line numbers added as comments.
+    """
+    numbered_code = ""
+    for i, line in enumerate(code.splitlines()):
+        numbered_code += f"// {start_lineno + i}: {line}\n"
+    return numbered_code
 
 # def load_model_by_name(model_name: str, temperature: float = 0.7) -> BaseChatModel:
 #     '''Load the model by name'''

@@ -17,7 +17,6 @@ import shutil
 from typing import Callable, Any
 from langchain_core.tools import  StructuredTool
 from langgraph.prebuilt import ToolNode # type: ignore
-import atexit
 import json
 from tools.fuzz_tools.log_parser import CompileErrorExtractor
 from prompts.raw_prompts import CODE_FIX_PROMPT, EXTRACT_CODE_PROMPT, FUZZ_FIX_PROMPT, INIT_PROMPT
@@ -55,6 +54,8 @@ class CodeFormatTool():
         # if "\\n" in source_code:
             # source_code = source_code.replace("\\n", "\n")
 
+        # remove the line number if exists
+        source_code = re.sub(r'^//\s+\d+:\s?', '', source_code, flags=re.MULTILINE)
         # remove some useless string
         source_code = source_code.replace("```cpp", "")
         source_code = source_code.replace("```", "")
@@ -108,8 +109,8 @@ class InitGenerator:
 class CompilerWraper(Compiler):
     def __init__(self, oss_fuzz_dir: Path, project_name: str, new_project_name: str,
                      project_lang: LanguageType, harness_dict:dict[str, Path], 
-                     save_dir: Path, logger: logging.Logger):
-        super().__init__(oss_fuzz_dir, project_name, new_project_name)
+                     save_dir: Path, local_project_dir:Path, logger: logging.Logger):
+        super().__init__(oss_fuzz_dir, local_project_dir, project_name, new_project_name)
         self.logger = logger
         self.project_lang = project_lang
         self.save_dir = save_dir
@@ -364,15 +365,16 @@ class AgentFuzzer():
     FuzzerNode = "Fuzzer"
     FixBuilderNode = "FixBuilder"
 
-    def __init__(self, n_examples: int, example_mode: str, model_name: str, oss_fuzz_dir: Path, project_name: str, function_signature: str,
+    def __init__(self, n_examples: int, example_mode: str, model_name: str, temperature: float, oss_fuzz_dir: Path, project_name: str, function_signature: str,
                  usage_token_limit: int, model_token_limit: int, run_time: int, max_fix: int, max_tool_call: int,  
-                 clear_msg_flag: bool, save_dir: Path, cache_dir: Path, n_run: int = 1):
+                 clear_msg_flag: bool, save_dir: Path, cache_dir: Path, local_project_dir:Path, n_run: int = 1):
         
         self.n_examples = n_examples
         self.example_mode = example_mode
         self.eailier_stop_flag = False
         self.n_run = n_run
         self.model_name = model_name
+        self.temperature = temperature
         self.oss_fuzz_dir = oss_fuzz_dir
         self.project_name = project_name
         self.function_signature = function_signature
@@ -383,6 +385,7 @@ class AgentFuzzer():
         self.max_tool_call = max_tool_call
         self.cache_dir = cache_dir
         self.clear_msg_flag = clear_msg_flag
+        self.local_project_dir = local_project_dir
 
         # random generate a string for new project name
         random_str = ''.join(random.choices("abcdefghijklmnopqrstuvwxyz", k=16))
@@ -756,7 +759,7 @@ class AgentFuzzer():
                              self.run_time,  self.save_dir,  self.logger)
         
         compiler = CompilerWraper(self.oss_fuzz_dir, self.project_name, self.new_project_name, 
-                                  self.project_lang, self.harness_pairs, self.save_dir, self.logger)
+                                  self.project_lang, self.harness_pairs, self.save_dir, self.local_project_dir, self.logger)
 
         # build the graph
         builder = StateGraph(FuzzState)
@@ -880,30 +883,30 @@ class AgentFuzzer():
 
 
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
 
-    # run_parallel()
-    # exit()
+#     # run_parallel()
+#     # exit()
     
-    # build graph
-    ossfuzz_dir = Path("/home/yk/code/oss-fuzz/")
-    project_name = "coturn"
+#     # build graph
+#     ossfuzz_dir = Path("/home/yk/code/oss-fuzz/")
+#     project_name = "coturn"
 
-    # absolute path
-    save_dir = Path("/home/yk/code/LLM-reasoning-agents/outputs/agent/apr17/")
-    cache_dir = Path("/home/yk/code/LLM-reasoning-agents/cache/")
-    llm_name = "gpt-4o"
-    # function_sig = r"void tinyxml2::XMLElement::SetAttribute(const char *, const char *)"
-    function_sig = r"bool stun_is_response(const stun_buffer *)"
-    # function_sig = "cJSON * cJSON_Parse(const char *)"
+#     # absolute path
+#     save_dir = Path("/home/yk/code/LLM-reasoning-agents/outputs/agent/apr17/")
+#     cache_dir = Path("/home/yk/code/LLM-reasoning-agents/cache/")
+#     llm_name = "gpt-4o"
+#     # function_sig = r"void tinyxml2::XMLElement::SetAttribute(const char *, const char *)"
+#     function_sig = r"bool stun_is_response(const stun_buffer *)"
+#     # function_sig = "cJSON * cJSON_Parse(const char *)"
 
-    agent_fuzzer = AgentFuzzer(1, "rank", llm_name, ossfuzz_dir, project_name, function_sig, 
-                               usage_token_limit=1000, model_token_limit=8096,
-                               run_time=1, max_fix=5, max_tool_call=30, clear_msg_flag=True, 
-                               save_dir=save_dir, cache_dir=cache_dir)
+#     agent_fuzzer = AgentFuzzer(1, "rank", llm_name, 0.7, ossfuzz_dir, project_name, function_sig, 
+#                                usage_token_limit=1000, model_token_limit=8096,
+#                                run_time=1, max_fix=5, max_tool_call=30, clear_msg_flag=True, 
+#                                save_dir=save_dir, cache_dir=cache_dir)
     
-    atexit.register(agent_fuzzer.clean_workspace)
+#     atexit.register(agent_fuzzer.clean_workspace)
 
-    graph = agent_fuzzer.build_graph()
-    agent_fuzzer.run_graph(graph)
+#     graph = agent_fuzzer.build_graph()
+#     agent_fuzzer.run_graph(graph)
     

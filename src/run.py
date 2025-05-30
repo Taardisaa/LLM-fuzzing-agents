@@ -6,10 +6,10 @@ import yaml
 from multiprocessing import Pool
 from utils.misc import extract_name, get_benchmark_functions
 from issta.issta import ISSTAFuzzer
-from agents.reflexion_agent import AgentFuzzer
 from tools.results_analysis import run_agent_res
 from constants import PROJECT_PATH
 from pathlib import Path
+import traceback  # Add this at the top
 
 class Runner:
     def __init__(self, config_path: str):
@@ -24,11 +24,13 @@ class Runner:
         self.cache_dir = Path(self.config.get('cache_dir', "/home/yk/code/LLM-reasoning-agents/cache/"))
         self.bench_dir = Path( self.config.get('bench_dir', os.path.join(PROJECT_PATH, "benchmark-sets", "ntu")))
         self.save_dir = Path(self.config.get('save_dir', os.path.join(PROJECT_PATH, "outputs", "issta_rank_one")))
+        self.local_project_dir = Path(self.config.get('local_project_dir', "/fake/path"))
         # absolute path
         if not self.save_dir.is_absolute():
             self.save_dir = PROJECT_PATH /  self.save_dir
 
         self.model_name = self.config.get('model_name', "gpt-4-0613")
+        self.temperature = self.config.get('temperature', 0.7)
         self.run_time = self.config.get('run_time', 1)
         self.max_fix = self.config.get('max_fix', 5)
         self.max_tool_call = self.config.get('max_tool_call', 15)
@@ -37,11 +39,11 @@ class Runner:
         self.n_examples = self.config.get('n_examples', 1)
         self.example_mode = self.config.get('example_mode', "rank")
         self.iterations = self.config.get('iterations', 3)
-        self.num_processes = self.config.get('num_processes', os.cpu_count() // 2 ) # type: ignore
+        self.num_processes = self.config.get('num_processes', os.cpu_count() // 2) # type: ignore
         self.project_name = self.config.get('project_name')
         self.function_signatures = self.config.get('function_signatures', [])
         self.clear_msg_flag = self.config.get('clear_msg_flag', True)
-        self.method = self.config.get('method', "issta")
+        self.tool_flag = self.config.get('tool_flag', False)
         
     def _load_config(self, config_path: str):
         """Load configuration from a YAML file."""
@@ -90,30 +92,25 @@ class Runner:
 
 
     @staticmethod
-    def run_one(n_examples: int, example_mode: str, model_name: str, oss_fuzz_dir: Path, 
+    def run_one(n_examples: int, example_mode: str, model_name: str, temperature: float,  oss_fuzz_dir: Path, 
                  project_name: str, function_signature: str, usage_token_limit: int, 
                  model_token_limit: int, run_time: int, max_fix: int, max_tool_call: int,
-                 clear_msg_flag:bool, save_dir: Path, cache_dir: Path, n_run: int = 1, method:str="issta"):
+                 clear_msg_flag:bool, save_dir: Path, cache_dir: Path, local_project_dir:Path, n_run: int = 1, tool_flag:bool=False):
         """Run the fuzzer on a single function."""
 
-        if method == "issta":
-            call_class = ISSTAFuzzer
-        else:
-            call_class = AgentFuzzer
-
-        agent_fuzzer = call_class(n_examples, example_mode, model_name, oss_fuzz_dir,
+        agent_fuzzer = ISSTAFuzzer(n_examples, example_mode, model_name, temperature, oss_fuzz_dir,
                                         project_name, function_signature, usage_token_limit, 
                                         model_token_limit, run_time, max_fix,
                                         max_tool_call, clear_msg_flag, save_dir, 
-                                        cache_dir, n_run)
+                                        cache_dir,local_project_dir, n_run, tool_flag=tool_flag)
         try:
-            # Your main logic here
+        # Your main logic here
             graph = agent_fuzzer.build_graph()
             agent_fuzzer.run_graph(graph)
 
         except Exception as e:
             agent_fuzzer.logger.error(f"Exit. An exception occurred: {e}")
-            print(f"Program interrupted. from {e} ")
+            traceback.print_exc() 
         finally:
             agent_fuzzer.clean_workspace()
     
@@ -131,11 +128,10 @@ class Runner:
                     print(f"{i+1}th of functions in {key}: {len(function_dict[key])}")
                     
                     pool.apply_async(Runner.run_one, args=(
-                        self.n_examples, self.example_mode, self.model_name, self.oss_fuzz_dir, 
+                        self.n_examples, self.example_mode, self.model_name, self.temperature, self.oss_fuzz_dir, 
                         project_name, function_signature, self.usage_token_limit, 
                         self.model_token_limit, self.run_time, self.max_fix, self.max_tool_call, self.clear_msg_flag,
-                        self.save_dir, self.cache_dir, n_run, self.method))
-
+                        self.save_dir, self.cache_dir, self.local_project_dir, n_run, self.tool_flag))
             pool.close()
             pool.join()
 
@@ -156,7 +152,13 @@ class Runner:
                                                  allowed_langs=["c", "c++"],
                                                  allowed_functions=self.function_signatures)
 
+       
         for i in range(self.iterations):
+            iter_res = self.save_dir / "res_{}.txt".format(i+1)
+            if iter_res.exists():
+                print(f"Iteration {i+1} already completed. Skipping...")
+                continue
+            print(f"Running iteration {i+1} of {self.iterations}...")
             success_func = self.get_successful_func()
             todo_function_dicts = self.filter_functions(function_dicts, success_func)
             max_num_function, total_function = self.get_num_function(todo_function_dicts)
@@ -181,16 +183,12 @@ class Runner:
         for function_signature in self.function_signatures:
             for i in iterations_list:
   
-                # n_examples: int, example_mode: str, model_name: str, oss_fuzz_dir: Path, 
-                #  project_name: str, function_signature: str, usage_token_limit: int, 
-                #  model_token_limit: int, run_time: int, max_fix: int, max_tool_call: int,
-                #  clear_msg_flag:bool, save_dir: Path, cache_dir: Path, n_run: int = 1, method:str="issta")
-                
+               
                 Runner.run_one(
-                    self.n_examples, self.example_mode, self.model_name, self.oss_fuzz_dir, 
+                    self.n_examples, self.example_mode, self.model_name, self.temperature, self.oss_fuzz_dir, 
                     self.project_name, function_signature, self.usage_token_limit, 
                     self.model_token_limit, self.run_time, self.max_fix, self.max_tool_call, 
-                    self.clear_msg_flag, self.save_dir, self.cache_dir, n_run=i+1, method=self.method
+                    self.clear_msg_flag, self.save_dir, self.cache_dir, self.local_project_dir, n_run=i+1,  tool_flag=self.tool_flag
                 )
 
 
@@ -200,7 +198,7 @@ if __name__ == "__main__":
     #     print("Usage: python run.py <config_path>")
     #     sys.exit(1)
 
-    config_path = "/home/yk/code/LLM-reasoning-agents/cfg/ntu_rank_one.yaml"
+    config_path = "/home/yk/code/LLM-reasoning-agents/cfg/ntu_agent.yaml"
     runner = Runner(config_path)
     
     # Set up signal handling for graceful termination

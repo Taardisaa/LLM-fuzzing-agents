@@ -203,14 +203,15 @@ def run_agent_res(output_path: Path, method:str="issta", n_run:int=1):
             fuzz_res, usage_falg = get_run_res(work_dir, method=method)
             res_count[fuzz_res] += 1
 
+            if fuzz_res != FuzzResult.Success:
+                continue
+
+            success_name_list.append(function_name)
             if usage_falg:
                 save_f.write(f"{project_name}/{function_name}. fuzz res: {fuzz_res}, HaveUsage\n")
             else:
                 save_f.write(f"{project_name}/{function_name}. fuzz res: {fuzz_res}, NoUsage\n")
-                
-            if fuzz_res == FuzzResult.Success:
-                success_name_list.append(function_name)
-            
+        
         save_f.write(f"Results count: {res_count}\n")
         save_f.write(f"Success:{res_count['Success'] }")
 
@@ -219,5 +220,5 @@ def run_agent_res(output_path: Path, method:str="issta", n_run:int=1):
 
 if __name__ == "__main__":
 
-    run_agent_res(Path("/home/yk/code/LLM-reasoning-agents/outputs/issta_rank_one"), method="issta")
+    run_agent_res(Path("/home/yk/code/LLM-reasoning-agents/outputs/issta_rank_one/no_tool"), method="issta", n_run=3)
     # run_oss_fuzz_res()

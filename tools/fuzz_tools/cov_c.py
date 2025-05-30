@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 
-import os
 import subprocess
 import argparse
 from typing import List, Optional
 import logging
 from pathlib import Path
-import re
 import json
-import shutil
 
 def setup_logging():
     """Configure logging for the script."""
@@ -19,7 +16,7 @@ def setup_logging():
     )
     return logging.getLogger(__name__)
 
-def reply_corpus(fuzzer_name: str, corpus_path: str, timeout: int = 100) -> Optional[int]:
+def reply_corpus(fuzzer_name: str, corpus_path: str, timeout: int = 100) -> Optional[str]:
     """
     Run fuzzer and extract edge coverage.
     """
@@ -69,7 +66,7 @@ def sort_files(directory: Path) -> List[Path]:
     return [f[0] for f in files]
 
 
-def get_function_cov(fuzzer_name: str,  corpus_dir: str) -> tuple[int, bool]:
+def get_function_cov(fuzzer_name: str,  corpus_dir: str) -> tuple[int, int, str]:
     """
     Reduce corpus by iteratively halving test cases.
     

@@ -36,7 +36,7 @@ class LSPFunction(Enum):
     Definition = "definition"
     Declaration = "declaration"
     References = "references"
-    Header = "header"
+    StructFunctions = "struct_functions"
 
 class CompileResults(Enum):
     Success = "Complie Success"

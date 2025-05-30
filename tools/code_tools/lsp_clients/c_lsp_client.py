@@ -37,8 +37,8 @@ class CLSPCLient():
         #  Waiting for clangd to index files
         await client.wait_for_indexing()
 
-        if lsp_function == LSPFunction.Header:
-              # Find declaration
+        if lsp_function == LSPFunction.Declaration:
+            # Find declaration
             response = await client.find_declaration(
                 file_path,
                 line=lineno,  
@@ -50,15 +50,6 @@ class CLSPCLient():
             await client.stop_server()
             result = response.get("result", [])
             return result
-
-
-        elif lsp_function == LSPFunction.Declaration:
-            # Find declaration
-            response = await client.find_declaration(
-                file_path,
-                line=lineno,  
-                character=charpos
-            )
 
         elif lsp_function == LSPFunction.Definition:
             # Find definition
@@ -90,9 +81,6 @@ class CLSPCLient():
         return res
     async def request_references(self, file_path: str, lineno: int, charpos: int) -> list[dict[str, Any]]:
         res = await self.request_fucntion(file_path, lineno, charpos, LSPFunction.References)
-        return res
-    async def request_header(self, file_path: str, lineno: int, charpos: int) -> list[dict[str, Any]]:
-        res = await self.request_fucntion(file_path, lineno, charpos, LSPFunction.Header)
         return res
 
     async def request_workspace_symbols(self, symbol: str) -> list[tuple[str, int, int]]:

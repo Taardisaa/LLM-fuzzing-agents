@@ -1,3 +1,28 @@
+#include <stdbool.h>
+#include "dns/types.h"
+
+
+#define ISC_LEXCOMMENT_DNSMASTERFILE 0x08
+
+enum dns_decompress {
+        DNS_DECOMPRESS_DEFAULT,
+        DNS_DECOMPRESS_PERMITTED,
+        DNS_DECOMPRESS_NEVER,
+        DNS_DECOMPRESS_ALWAYS,
+};
+
+
+static inline dns_decompress_t /* inline to suppress code generation */
+dns_decompress_setpermitted(dns_decompress_t dctx, bool permitted) {
+        if (dctx == DNS_DECOMPRESS_NEVER || dctx == DNS_DECOMPRESS_ALWAYS) {
+                return dctx;
+        } else if (permitted) {
+                return DNS_DECOMPRESS_PERMITTED;
+        } else {
+                return DNS_DECOMPRESS_DEFAULT;
+        }
+}
+
 IGRAPH_EXPORT igraph_error_t igraph_read_graph_pajek(igraph_t *graph, FILE *instream){
 
 }
@@ -31,3 +56,43 @@ LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
         return 0;
 }
+
+
+// struct_specifier_query
+struct dns_zone {
+	/* Unlocked */
+	unsigned int magic;
+	isc_mutex_t lock;
+#ifdef DNS_ZONE_CHECKLOCK
+	bool locked;
+#endif /* ifdef DNS_ZONE_CHECKLOCK */
+	isc_mem_t *mctx;
+	isc_refcount_t references;
+
+	isc_rwlock_t dblock;
+	dns_db_t *db; /* Locked by dblock */
+
+	unsigned int tid;
+        dns_zone_t *master;       
+	/* Locked */
+	dns_zonemgr_t *zmgr;
+	ISC_LINK(dns_zone_t) link; /* Used by zmgr. */
+	isc_loop_t *loop;
+}
+
+// struct_specifier_query
+typedef struct A {
+        bool is_valid;
+} B;
+
+// type definnition
+typedef struct dns_name	 dns_name_t;
+typedef unsigned int uint32_t;
+
+// template 
+template <typename T>
+T myMax(T x, T y) {
+  return (x > y) ? x : y;
+}
+
+
