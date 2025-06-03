@@ -1,5 +1,6 @@
 from constants import LanguageType, LSPFunction
 from tools.code_tools.parsers.base_parser import BaseParser
+from tools.code_tools.parsers.c_parser import common_query_dict
 from pathlib import Path
 from typing import Optional
 
@@ -26,36 +27,6 @@ def_query_dict = {
         (class_specifier
             name: (type_identifier) @identifier_name
              (#eq? @identifier_name "{}"))@node_name""",
-    "macro_func": """(preproc_function_def
-                    name: (identifier) @identifier_name
-                     (#eq? @identifier_name "{}")
-                    ) @node_name""",
-
-    "macro_definition": """(preproc_def
-                    name: (identifier) @identifier_name
-                    (#eq? @identifier_name "{}")) @node_name""",
-    "type_definition": """(type_definition
-                    type: (_) @struct_name
-                    declarator: (_) @identifier_name
-                    (#eq? @identifier_name "{}")) @node_name""",
-    "struct": """(struct_specifier
-                    name: (type_identifier) @identifier_name
-                    (#eq? @identifier_name "{}")) @node_name""",
-    "union": """(union_specifier
-                    name: (type_identifier) @identifier_name
-                    (#eq? @identifier_name "{}")) @node_name""",
-    "enum": """(enum_specifier
-                    name: (type_identifier) @identifier_name
-                    (#eq? @identifier_name "{}")) @node_name""",
-    "enum_dedefinition": """(enum_specifier
-                        name: (type_identifier) @enum.name
-                        body: (enumerator_list
-                                (enumerator
-                                name: (identifier) @identifier_name
-                                (#eq? @identifier_name "{}")
-                                )
-                            ) @enum.body
-                    ) @node_name"""
         }
 
 decl_query_dict = {
@@ -73,36 +44,6 @@ decl_query_dict = {
                     declarator: (function_declarator
                     declarator: (identifier) @identifier_name
                      (#eq? @identifier_name "{}"))) @node_name""",
-   "macro_func": """(preproc_function_def
-                    name: (identifier) @identifier_name
-                     (#eq? @identifier_name "{}")
-                    ) @node_name""",
-
-    "macro_definition": """(preproc_def
-                    name: (identifier) @identifier_name
-                    (#eq? @identifier_name "{}")) @node_name""",
-    "type_definition": """(type_definition
-                    type: (_) @struct_name
-                    declarator: (_) @identifier_name
-                    (#eq? @identifier_name "{}")) @node_name""",
-    "struct": """(struct_specifier
-                    name: (type_identifier) @identifier_name
-                    (#eq? @identifier_name "{}")) @node_name""",
-    "union": """(union_specifier
-                    name: (type_identifier) @identifier_name
-                    (#eq? @identifier_name "{}")) @node_name""",
-    "enum": """(enum_specifier
-                    name: (type_identifier) @identifier_name
-                    (#eq? @identifier_name "{}")) @node_name""",
-    "enum_dedefinition": """(enum_specifier
-                        name: (type_identifier) @enum.name
-                        body: (enumerator_list
-                                (enumerator
-                                name: (identifier) @identifier_name
-                                (#eq? @identifier_name "{}")
-                                )
-                            ) @enum.body
-                    ) @node_name"""
 }
 
 
@@ -130,6 +71,9 @@ related_query_dict = {
             """,
 
 }
+
+decl_query_dict.update(common_query_dict)
+def_query_dict.update(common_query_dict)
 
 class CPPParser(BaseParser):
     def __init__(self, file_path: Optional[Path], source_code: Optional[str] = None):

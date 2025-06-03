@@ -99,17 +99,18 @@ The above {project_lang} code can be built successfully but has the following er
 
 Based on the above information, fix the code. Must provide the full fixed code. 
 You code must be compilable and runnable. 
-Do not change the function signature of the harness function.
+Do not change the function signature of the harness function. 
 
 '''
 
-# tool_prompts = '''
-# You can call the following tools to get more information about the code:
-# - get_symbol_header: Get the header file of a symbol.
-# - get_symbol_definition: Get the definition of a symbol.
-# - get_symbol_declaration: Get the declaration of a symbol.
-# - view_code: View the code around the given file and targe line.
-# '''
+tool_prompts = '''
+You can call the following tools to get more information about the code:
+- get_symbol_header: Get the header file of a symbol.
+- get_symbol_definition: Get the definition of a symbol. (Details of the symbol, like the function body)
+- get_symbol_declaration: Get the declaration of a symbol.
+- view_code: View the code around the given file and targe line.
+- get_struct_related_functions: Get the functions related to a struct. This can be used to get the functions that operate on a struct, like the initialization, destruction functions.
+'''
 
 REMOVED_FUNC = ['spdk_json_parse', 'GetINCHIfromINCHI', 'GetINCHIKeyFromINCHI', 'GetStructFromINCHI',
                 'redisFormatCommand', 'stun_is_response', 'bpf_object__open_mem', 'lre_compile', 'JS_Eval', 
@@ -456,9 +457,9 @@ class ISSTAFuzzer(AgentFuzzer):
                                         code_callback=code_formater.extract_code, logger=self.logger)
 
         global fuzz_fix_prompt, compile_fix_prompt
-        # if self.tool_flag:
-        #     fuzz_fix_prompt += tool_prompts 
-        #     compile_fix_prompt += tool_prompts 
+        if self.tool_flag:
+            fuzz_fix_prompt += tool_prompts 
+            compile_fix_prompt += tool_prompts 
 
         #  compile_fix_prompt: str, fuzz_fix_prompt: str, clear_msg_flag: bool)
         fix_builder = FixerPromptBuilder(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.cache_dir, self.usage_token_limit, self.logger,

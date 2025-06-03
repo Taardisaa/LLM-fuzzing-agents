@@ -59,7 +59,7 @@ class CodeFormatTool():
         # remove some useless string
         source_code = source_code.replace("```cpp", "")
         source_code = source_code.replace("```", "")
-        # if source_code and  source_code.startswith("c"):
+        # if source_code and source_code.startswith("c\n"):
             # source_code = source_code[1:]
         return source_code
 

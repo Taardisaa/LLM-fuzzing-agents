@@ -382,8 +382,9 @@ class CodeRetriever():
 
     def get_struct_related_functions(self, symbol_name: str, retriever: Retriever = Retriever.Mixed) -> str:
         """
-        This tool is used to find potential functions to initilze and destroy the struct (symbol_name). 
-        This tool will return all functions defined in the same header file as the the struct name in the workspace.
+        This tool is used to find potential functions to initilze and destroy the struct (symbol_name). For complicated struct, 
+        it may require special functions to initialize and destroy the struct. It will search the workspace for all functions that are related to the struct name, 
+        such as functions that take the struct as an argument or return the struct. 
     
         Args:
             symbol_name (str): The name of the struct to find related functions for
@@ -421,7 +422,7 @@ class CodeRetriever():
             name_str += function_name + "\n"
             if count % 10 == 0:
                 name_str += "\n"  # Add a newline every 10 functions for readability
-            if count >= 30:
+            if count >= 50:
                 break
             
         return name_str

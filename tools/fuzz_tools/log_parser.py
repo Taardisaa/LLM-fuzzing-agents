@@ -138,7 +138,7 @@ class FuzzLogParser():
         inited_cov = re.search(r"INITED\s+cov:\s+(\d+)", log)
         inited_cov_value = inited_cov.group(1) if inited_cov else None
 
-            # Extract the number after `DONE   cov:`
+        # Extract the number after `DONE   cov:`
         done_cov = re.search(r"DONE\s+cov:\s+(\d+)", log)
         done_cov_value = done_cov.group(1) if done_cov else None
 

@@ -123,6 +123,8 @@ class ParserCodeRetriever():
             if file_type not in filter_header:
                 continue
             
+            if self.lsp_function == LSPFunction.Definition and ";" in content:
+                continue
             # find character position
             char_pos = content.find(self.symbol_name)
             # the line number is 1-based, we need to convert it to 0-based
@@ -240,8 +242,8 @@ class ParserCodeRetriever():
 def main():
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('--workdir', type=str, default="/home/yk/oss_projects/bind9", help='The search directory.')
-    parser.add_argument('--lsp-function', type=str, choices=[e.value for e in LSPFunction], default="struct_functions", help='The LSP function name')
-    parser.add_argument('--symbol-name', type=str, default="/home/yk/oss_projects/bind9/lib/isc/mem.c" ,help='The function name or struct name.')
+    parser.add_argument('--lsp-function', type=str, choices=[e.value for e in LSPFunction], default="declaration", help='The LSP function name')
+    parser.add_argument('--symbol-name', type=str, default="dns_rootname" ,help='The function name or struct name.')
     parser.add_argument('--lang', type=str, choices=[e.value for e in LanguageType], default="C" ,help='The project language.')
     args = parser.parse_args()
     
@@ -253,6 +255,9 @@ def main():
         msg = f"{LSPResults.Error}: {e}"
         res = []
 
+    print(f"Message: {msg}")
+    print(f"Response: {res}")
+    
     if args.lsp_function == LSPFunction.StructFunctions.value:
         file_name = f"{Path(lsp.symbol_name).stem}_struct_functions_parser.json"
     else:

@@ -54,11 +54,11 @@ class FuzzerRunner():
             # read the log file
             return FuzzLogParser(self.project_lang).parse_log(log_file_path)
           
-        except sp.TimeoutExpired as e:
+        except sp.TimeoutExpired:
             # sleep some time to make sure the log file is written, otherwise, some part of the log file may be missing
             time.sleep(self.run_timeout)
             return FuzzLogParser(self.project_lang).parse_log(log_file_path)
-        except Exception as e:
+        except Exception:
             # print(e)
             # timeout error can also capture from the log file
             return FuzzLogParser(self.project_lang).parse_log(log_file_path)

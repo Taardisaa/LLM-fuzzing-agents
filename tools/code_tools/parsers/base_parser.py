@@ -106,7 +106,7 @@ class BaseParser:
     def get_file_functions(self) -> list[str]:
         
         ret_list: list[str] = []
-        for key, query in self.func_declaration_query_dict.items():
+        for _, query in self.func_declaration_query_dict.items():
             # Execute the query
             query = self.parser_language.query(query)
             captures = query.captures(self.tree.root_node)

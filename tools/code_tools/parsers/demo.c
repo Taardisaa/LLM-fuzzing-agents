@@ -2,6 +2,59 @@
 #include "dns/types.h"
 
 
+#define UTEST_LYCTX (_UC->ctx)
+typedef void  (*Dwarf_Handler)(Dwarf_Error dw_error, Dwarf_Ptr dw_errarg);
+typedef struct Dwarf_Error_s*      Dwarf_Error;
+typedef struct Dwarf_CU_Context_s  *Dwarf_CU_Context;
+typedef struct _GdkPixbufAnimation GdkPixbufAnimation;
+
+static inline const char *JS_ToCString(JSContext *ctx, JSValueConst val1)
+{
+    return JS_ToCStringLen2(ctx, NULL, val1, 0);
+}
+
+
+typedef struct _Str {
+    char *ptr;
+    int length;
+    int area_size;
+} Str;
+
+
+
+/** STUN decoding options */
+enum pj_stun_decode_options
+{
+    /** 
+     * Tell the decoder that the message was received from datagram
+     * oriented transport (such as UDP).
+     */
+    PJ_STUN_IS_DATAGRAM     = 1,
+};
+
+sip_msg_t tmsg;
+int faked_msg_match(sip_msg_t tmsg);
+struct hdr_field *diversion;
+typedef char isc_lexspecials_t[256];
+extern const dns_name_t dns_rootname;
+struct dns_message {
+        /* public from here down */
+        unsigned int   magic;
+        isc_refcount_t references;
+
+        dns_messageid_t  id;
+        unsigned int     flags;
+        dns_rcode_t      rcode;
+        dns_opcode_t     opcode;
+        dns_rdataclass_t rdclass;
+
+};
+
+#define isc_mem_destroy(cp) isc__mem_destroy((cp)_ISC_MEM_FILELINE)
+
+extern unsigned int isc_mem_debugging;
+
+
 #define ISC_LEXCOMMENT_DNSMASTERFILE 0x08
 
 enum dns_decompress {
@@ -9,6 +62,24 @@ enum dns_decompress {
         DNS_DECOMPRESS_PERMITTED,
         DNS_DECOMPRESS_NEVER,
         DNS_DECOMPRESS_ALWAYS,
+};
+
+enum {
+        dns_rdataclass_reserved0 = 0,
+#define dns_rdataclass_reserved0 \
+                                ((dns_rdataclass_t)dns_rdataclass_reserved0)
+        dns_rdataclass_in = 1,
+#define dns_rdataclass_in       ((dns_rdataclass_t)dns_rdataclass_in)
+        dns_rdataclass_chaos = 3,
+#define dns_rdataclass_chaos    ((dns_rdataclass_t)dns_rdataclass_chaos)
+        dns_rdataclass_ch = 3,
+#define dns_rdataclass_ch       ((dns_rdataclass_t)dns_rdataclass_ch)
+        dns_rdataclass_hs = 4,
+#define dns_rdataclass_hs       ((dns_rdataclass_t)dns_rdataclass_hs)
+        dns_rdataclass_none = 254,
+#define dns_rdataclass_none     ((dns_rdataclass_t)dns_rdataclass_none)
+        dns_rdataclass_any = 255
+#define dns_rdataclass_any      ((dns_rdataclass_t)dns_rdataclass_any)
 };
 
 
@@ -96,3 +167,14 @@ T myMax(T x, T y) {
 }
 
 
+#pragma once
+enum {
+        dns_rdatatype_none = 0,
+        dns_rdatatype_a = 1,
+        dns_rdatatype_ns = 2,
+        dns_rdatatype_md = 3,
+        dns_rdatatype_mf = 4,
+};
+
+dns_name_t *
+dns_fixedname_initname(dns_fixedname_t *fixed);
