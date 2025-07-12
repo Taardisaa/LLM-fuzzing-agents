@@ -1,11 +1,10 @@
 import docker
 import subprocess as sp
 import os
-from constants import LanguageType, DockerResults
+from constants import LanguageType, DockerResults, PROJECT_PATH
 from pathlib import Path
-from docker.models.containers import Container
-from typing import Union, Optional, Callable, Any, cast
-
+from typing import Union, Optional, Any
+import threading
 #  c
 # c++  # cpp for tree-sitter
 # go
@@ -39,7 +38,9 @@ class DockerUtils:
             return False
         except sp.TimeoutExpired as e:
             return False
-
+        except Exception as e:
+            print(f"Error building image: {e}")
+            return False
 
 
     def remove_image(self) -> str:
@@ -56,61 +57,15 @@ class DockerUtils:
             print(f"Error removing image: {e}")
             return str(e)
 
-    def contrainer_exec_run(self, container:Container, cmd: str) -> str:
-        """
-        Execute a command inside a Docker container.
-        :param container: Docker container object
-        :param cmd: Command to execute
-        """ 
-        # add time out
-
-        cmd_res = container.exec_run(cmd, tty=True)  # 5 minutes timeout
-        return cmd_res.output.decode("utf-8")
-
     def clean_build_dir(self) -> None:
         """
         Clean the /out directory in the Docker container.
         """
-        def remove_call_back(container: Container) -> str:
-            container.exec_run("rm -rf /out/*", tty=True)
-            container.exec_run("rm -rf /work/*", tty=True)
-            return ""
-        
-        # clean the /out directory
-        self.run_call_back(remove_call_back)
-
-
-    def run_call_back(self, call_back: Callable[[Container], str], *args: Any, **kargs: Any) -> str:
-        """
-        Explore the directory structure of a Docker image hosted on GCR.
-        :param image_name: Full image name (e.g., gcr.io/oss-fuzz/libxml2)
-        """
         compile_out_path = os.path.join(self.ossfuzz_dir, "build", "out", self.new_project_name)
-        os.makedirs(compile_out_path, exist_ok=True)
-
-        client = docker.from_env()
-        try:
-            # Create a container from the image without starting it
-            container = client.containers.create(self.image_name, command="/bin/sh", tty=True,  # Allocate a pseudo-TTY   # type: ignore
-                                                 privileged=True,  # Enables privileged mode
-                                                 environment={"FUZZING_LANGUAGE": self.fuzzing_lang},  # Set the environment variable
-                                                 volumes={compile_out_path: {"bind": "/out", "mode": "rw"}},  # Mount the project directory
-                                                 )  # Mount the cache directory (if provided
-            container = cast(Container, container) 
-            try:
-                # Start the container
-                container.start() # type: ignore
-                cmd_res = call_back(container, *args)
-                return cmd_res
-               
-            finally:
-                # Clean up by removing the container
-                container.remove(force=True)
+        self.run_cmd(["rm", "-rf", "/out/*"], volumes={compile_out_path: {"bind": "/out", "mode": "rw"}})
+        self.run_cmd(["rm", "-rf", "/work/*"])
 
 
-        except Exception as e:
-            return f"{DockerResults.Error.value}: {e}"
-      
     def run_cmd(self, cmd_list: Union[list[str], str], timeout:Optional[int]=None, **kargs:Any) -> str:
 
         client = docker.from_env()
@@ -138,109 +93,93 @@ class DockerUtils:
         except Exception as e:
             return f"{DockerResults.Error.value}: {e}"
 
+    def exec_in_container(self, container_id: str, cmd: Union[list[str], str], workdir: Optional[str] = None, timeout: Optional[int] = 60) -> str:
+        """
+        Execute a command inside a running Docker container with an optional timeout.
+        :param container_id: The ID or name of the running container.
+        :param cmd: The command to execute (str or list).
+        :param workdir: The working directory inside the container (optional).
+        :param timeout: Timeout in seconds (optional).
+        :return: The command output as a string.
+        """
+        client = docker.from_env()
+        container = client.containers.get(container_id)
+        if isinstance(cmd, list):
+            cmd = " ".join(cmd)
+        exec_kwargs: dict[str, Any] = {"cmd": cmd, "stdout": True, "stderr": True, "tty": True, "privileged": True}
+        if workdir:
+            exec_kwargs["workdir"] = workdir
 
+        result = {"output": ""}
 
+        def run_exec():
+            try:
+                exec_result = container.exec_run(**exec_kwargs) # type: ignore
+                output = exec_result.output.decode("utf-8") if hasattr(exec_result, "output") else exec_result[1].decode("utf-8")
+                result["output"] = output
+            except Exception as e:
+                result["output"] = f"{DockerResults.Error.value}: {str(e)}"
 
+        thread = threading.Thread(target=run_exec)
+        thread.start()
+        thread.join(timeout)
+        if thread.is_alive():
+            # Timeout occurred
+            try:
+                container.kill()  # type: ignore
+                container.start()  # Restart the container if needed
+            except Exception:
+                pass
+            return f"{DockerResults.Error.value}: Command timed out after {timeout} seconds."
+        return result["output"]
 
-    # def get_all_files(self, start_path: str) -> list[str]:
-    #     '''Get all files in the project directory'''
-        
-    #     def find_call_back(container, cmd):
-    #         return container.exec_run(cmd)
+    def start_container(self) -> str:
+        """
+        Start a Docker container from the image and return its container ID.
+        If the container is already running, reuse it.
+        """
+        try:
+            workdir = self.run_cmd(["pwd"], timeout=None, volumes=None).strip()
+            client = docker.from_env()
+            # You can use a unique name for the container to avoid duplicates
+            container_name = f"{self.new_project_name}_retriever"
+            # Check if container exists and is running
+            try:
+                container = client.containers.get(container_name)
+                if container.status != "running":
+                    container.start()
+                return container.id # type: ignore
+            except Exception as e:
+                pass  # Container does not exist, create it
 
-    #     cmd = "find {}".format(start_path)
-    #     # Execute `find` command to recursively list files and directories
-    #     results = self.run_docker_cmd(self.image_name, find_call_back, cmd)
+            compile_out_path = str(self.ossfuzz_dir / "build" / "out" / self.new_project_name)
+            os.makedirs(compile_out_path, exist_ok=True)
+            # You can add more volumes as needed
+            container = client.containers.run(
+                self.image_name,
+                command="/bin/sh",
+                name=container_name,
+                tty=True,
+                detach=True,
+                privileged=True,
+                environment={"FUZZING_LANGUAGE": self.fuzzing_lang},
+                volumes={compile_out_path: {"bind": "/out", "mode": "rw"},
+                            os.path.join(PROJECT_PATH, "agent_tools"): {"bind": os.path.join(workdir, "agent_tools"), "mode": "rw"}
+                         },
+            )
+            return container.id # type: ignore
+        except Exception as e:
+            print(f"Error starting container: {e}")
+            return f"{DockerResults.Error.value}: {e}"
 
-    #     output = results.output.decode("utf-8").strip()
-    #     if output is None:
-    #         return []
-
-    #     # split the directory structure
-    #     all_file = output.split("\n")
-    #     return all_file
-
-    # def get_header_context(self) -> list[str]:
-    #     '''Get the header information from the project harness file'''
-
-    #     self.logger.info("Get the header information from the project harness file used without tool ")
-    #     # Get the harness file path
-    #     harness_path = self.oss_fuzz_tool.get_harness_and_fuzzer()[1]
-
-    #     #  read the content of the harness file from the docker image
-    #     def read_file(container, file_path):
-    #         return container.exec_run("cat {}".format(file_path))
-
-    #     results = self.run_docker_cmd(self.image_name, read_file, harness_path)
-    #     output = results.output.decode("utf-8").strip()
-    #     if output == "":
-    #         return []
-
-    #     # split the directory structure
-    #     all_file = output.split("\n")
-
-    #     header_list = []
-    #     # Read the content of the harness file
-
-    #     # only read the header part
-    #     for line in all_file:
-
-    #         # TODO this only works for C++ and c project
-    #         if "#include" in line:
-    #             header_list.append(line.strip())
-    #         #
-    #         if self.oss_fuzz_tool.get_entry_function() in line:
-    #             break
-
-    #     return header_list
-
-    # def get_header_path(self, header_name: str) -> str:
-       
-    #     # To find the header file in the container, we need find the original harness file
-    #     # and then find path of the header file
-    #     def find_call_back(container, cmd):
-    #         return container.exec_run(cmd)
-
-    #     # LLM may not give the correct head file name
-    #     if "/" in header_name:
-    #         header_name = header_name.split("/")[-1]
-
-    #     cmd = "find /src/ -type f -name {}".format(header_name)
-    #     # Execute `find` command to recursively list files and directories
-    #     results = self.run_docker_cmd(self.image_name, find_call_back, cmd)
-    #     output = results.output.decode("utf-8").strip()
-
-    #     if output == "":
-    #         msg = "No {} found!".format(header_name)
-    #         if self.logger:
-    #             self.logger.info(msg)
-    #         return msg
-
-    #     # split the directory structure
-    #     path_list = output.split("\n")
-
-    #     if len(path_list) > 1:
-
-    #         index = self.header_index_mapping[header_name]
-    #         if index == len(path_list):
-    #             index = 0
-    #             self.header_index_mapping[header_name] = 0
-    #         else:
-    #             self.header_index_mapping[header_name] += 1
-            
-    #         if self.logger:
-    #             msg = "Multiple header files found! {}".format(path_list)
-    #             self.logger.info(msg)
-           
-    #         return path_list
-
-    #     # Get the directory of path harness file
-    #     harness_path = OSSFuzzUtils(self.ossfuzz_dir, self.project_name, self.new_project_name, self.logger).get_harness_and_fuzzer()[1]
-    #     dir_a = os.path.dirname(harness_path)
-
-    #     # Calculate the relative path from directory A to path B
-    #     relative_path = os.path.relpath(path_list[0], start=dir_a)
-
-    #     self.logger.info(f"Tool call for {header_name}, return:{relative_path}")
-
-    #     return relative_path
+    def remove_container(self, container_id: str) -> None:
+        """
+        Stop and remove a running Docker container by its ID.
+        """
+        client = docker.from_env()
+        try:
+            container = client.containers.get(container_id)
+            container.stop()
+            container.remove()
+        except Exception as e:
+            print(f"Error stopping/removing container: {e}")

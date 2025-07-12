@@ -9,6 +9,8 @@ import re
 import random
 from typing import DefaultDict, Any
 from pathlib import Path
+from tree_sitter import Language, Parser
+import tree_sitter_cpp
 
 def filter_examples(project_code_usage: list[dict[str, str]], project_lang: LanguageType, usage_token_limit:int=200) -> str:
     filter_code_usage: list[dict[str, str]] = []
@@ -30,25 +32,88 @@ def filter_examples(project_code_usage: list[dict[str, str]], project_lang: Lang
     return function_usage
 
 
-def extract_name(function_signature: str)-> str:
-    # Remove the parameters by splitting at the first '('
-    function_name = function_signature.split('(')[0]
-    # Split the function signature into tokens to isolate the function name
-    tokens = function_name.strip().split()
-    assert len(tokens) > 0
+# def extract_name(function_signature: str, keep_namespace: bool=False)-> str:
+#     # Remove the parameters by splitting at the first '('
+#     function_name = function_signature.split('(')[0]
+#     # Split the function signature into tokens to isolate the function name
+#     tokens = function_name.strip().split()
+#     assert len(tokens) > 0
 
-    # The function name is the last token, this may include namespaces ::
-    function_name = tokens[-1]
+#     # The function name is the last token, this may include namespaces ::
+#     function_name = tokens[-1]
 
-    # split the function name by ::
-    function_name = function_name.split("::")[-1]
+#     if not keep_namespace:
+#         # split the function name by <
+#         if "<" in function_name:
+#             function_name = function_name.split("<")[0]
 
-    # remove * from the function name
-    if "*" in function_name:
-        function_name = function_name.replace("*", "")
+#         # split the function name by ::
+#         if "::" in function_name:
+#             function_name = function_name.split("::")[-1]
 
-    return function_name
+#     # remove * from the function name
+#     if function_name.startswith("*"):
+#         function_name = function_name.replace("*", "")
 
+#     return function_name
+
+def _strip_templates(name: str) -> str:
+    """Remove all balanced < … > template arguments, preserving :: separators."""
+    out:list[str] = [] 
+    depth = 0
+    for ch in name:
+        if ch == '<':
+            depth += 1                      # enter template-argument list
+        elif ch == '>':
+            depth -= 1                      # leave   "
+        elif depth == 0:
+            out.append(ch)                  # keep only when *not* inside <>
+    return ''.join(out).replace(' ', '')    # also drop stray spaces
+
+def extract_name(function_signature: str, keep_namespace: bool=False)-> str:
+
+    if  "N/A" in function_signature:
+        return "N/A"
+    lang = Language(tree_sitter_cpp.language())
+    parser = Parser(lang)
+
+    function_signature = function_signature.strip()
+    if not function_signature.endswith(";"):
+        function_signature += ";"
+    # a patch, replace a
+    function_signature = function_signature.replace("(anonymous namespace)::", "") # type: ignore
+    
+    # Parse the function signature
+    # Note: The parser expects a byte string, so we encode the string to bytes
+    tree = parser.parse( function_signature.encode('utf-8'))
+
+    # Find the function declaration node
+    query_str = """
+    (function_declarator
+        [
+            (qualified_identifier)@function_name
+            (identifier) @function_name
+        ]
+    )
+    """
+    query = lang.query(query_str)
+    captures = query.captures(tree.root_node)
+    if not captures:
+        raise ValueError(f"Function signature '{function_signature}' does not contain a valid function declaration.")
+    if len(captures) > 1:
+        raise ValueError(f"Function signature '{function_signature}' contains multiple function declarations, expected only one.")
+    
+
+    full_name = captures["function_name"][0]
+    
+    # remove templates
+    stripped_name = _strip_templates(full_name.text.decode('utf-8')) # type: ignore
+    if not keep_namespace:
+        # split the function name by :: and remove the namespace
+        if "::" in stripped_name:
+            stripped_name = stripped_name.split("::")[-1]
+    return stripped_name
+            
 
 def save_code_to_file(code: str, file_path: Path) -> None:
     '''Save the code to the file'''
@@ -206,14 +271,14 @@ def project_statistics():
 
 
 def get_benchmark_functions(bench_dir: Path, allowed_projects:list[str] = [], 
-                            allowed_langs: list[str]=[], allowed_functions: list[str] = []) -> dict[str, list[str]]:
+                            allowed_langs: list[str]=[], allowed_functions: list[str] = [], func_per_project: int=1) -> dict[str, list[str]]:
     """Get all functions from the benchmark directory."""
 
     allowed_names: list[str] = []
     # not None or empty
     if allowed_functions:
         for function_signature in allowed_functions:
-            function_name = extract_name(function_signature)
+            function_name = extract_name(function_signature, keep_namespace=True)
             allowed_names.append(function_name)
         
     function_dict: dict[str, list[str]] = {}
@@ -235,16 +300,19 @@ def get_benchmark_functions(bench_dir: Path, allowed_projects:list[str] = [],
             if allowed_langs and lang_name not in allowed_langs:
                 continue
         
+            count = 0
             function_list: list[str] = []
             for function in data.get("functions"):
                 function_signature = function["signature"]
-                function_name = extract_name(function_signature)
+                function_name = extract_name(function_signature, keep_namespace=True)
                 
                 # screen the function name
                 if len(allowed_names) > 0 and function_name not in allowed_names:
                     continue
-
+                if count >= func_per_project:
+                    break
                 function_list.append(function_signature)
+                count += 1
 
             if len(function_list) != 0:
                 function_dict[project_name] = function_list

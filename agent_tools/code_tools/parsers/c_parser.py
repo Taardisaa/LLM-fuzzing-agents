@@ -1,5 +1,5 @@
 from constants import LanguageType, LSPFunction
-from tools.code_tools.parsers.base_parser import BaseParser
+from agent_tools.code_tools.parsers.base_parser import BaseParser
 from pathlib import Path
 from typing import Optional
 
@@ -166,7 +166,7 @@ decl_query_dict.update(common_query_dict)
 def_query_dict.update(common_query_dict)
 
 class CParser(BaseParser):
-    def __init__(self, file_path: Optional[Path], source_code: Optional[str] = None):
+    def __init__(self, file_path: Optional[Path], source_code: Optional[str] = None,  project_lang: LanguageType = LanguageType.C):
         super().__init__(file_path, source_code,  decl_query_dict, def_query_dict, func_declaration_query_dict, LanguageType.C)
 
 
@@ -174,13 +174,13 @@ class CParser(BaseParser):
 
 # Example usage
 if __name__ == "__main__":
-    file_path = Path("/home/yk/code/LLM-reasoning-agents/tools/code_tools/parsers/demo.c")  # Replace with your C/C++ file path
-    line = 4 # Replace with the line number of the function's start position
+    file_path = Path("/home/yk/code/LLM-reasoning-agents/test/demo.c")  # Replace with your C/C++ file path
+    line = 101 # Replace with the line number of the function's start position
     column = 0  # Replace with the column number of the function's start position
 
     # IGRAPH_EXPORT igraph_error_t igraph_read_graph_pajek(igraph_t *graph, FILE *instream);
     # TODO CPP is better for the above function, we should try to use CPP if C is not working
     extractor = CParser(file_path)
-    extracted_code = extractor.get_symbol_source("UTEST_LYCTX", line, LSPFunction.Declaration)
+    extracted_code = extractor.get_symbol_source("bpf_object__open_mem", line, LSPFunction.Declaration)
     print("Function source code:")
     print(extracted_code)

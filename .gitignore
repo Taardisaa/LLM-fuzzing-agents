@@ -166,4 +166,5 @@ results/
 **/*outputs*/
 benchmark-sets/
 cache/
+cache_all/
 .gitignore

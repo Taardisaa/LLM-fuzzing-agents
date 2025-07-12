@@ -37,6 +37,7 @@ class LSPFunction(Enum):
     Declaration = "declaration"
     References = "references"
     StructFunctions = "struct_functions"
+    AllSymbols = "all_symbols"
 
 class CompileResults(Enum):
     Success = "Complie Success"
@@ -61,7 +62,8 @@ class ToolDescMode(Enum):
 
 class CodeSearchAPIName(Enum):
     """APIs for searching code snippets."""
-    Github = "Github"
+    Github = "github"
+    Sourcegraph = "sourcegraph"
     # Google = "Google"
     # Bing = "Bing"
     # StackOverflow = "StackOverflow"

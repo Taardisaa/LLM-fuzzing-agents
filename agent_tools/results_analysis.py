@@ -2,7 +2,8 @@ import os
 from constants import LanguageType
 from collections import defaultdict
 import pickle
-from tools.code_tools.parsers.c_cpp_parser import CCPPParser
+from agent_tools.code_tools.parsers.cpp_parser import CPPParser
+from agent_tools.code_tools.parsers.c_parser import CParser
 from utils.misc import extract_name
 from pathlib import Path
 from typing import DefaultDict
@@ -119,7 +120,7 @@ def get_run_res(work_dir: Path, method: str="issta"):
     if pass_pattern not in log_lines:
         return FuzzResult.Failed, usage_flag
 
-    parser = CCPPParser(file_path=harness_path, project_lang=LanguageType.C)
+    parser = CPPParser(file_path=harness_path, project_lang=LanguageType.CPP)
 
     if parser.exist_function_definition(function_name):
         return FuzzResult.Fake, usage_flag
@@ -195,8 +196,11 @@ def run_agent_res(output_path: Path, method:str="issta", n_run:int=1):
                 # check if the directory is empty
                 if len(os.listdir(work_dir)) == 0:
                     continue
-                
-                all_path.append((project_path.name, function_path.name, work_dir))
+
+                # get the run number
+                n = int(work_dir.name.split("_")[3:])
+                if n <= n_run:
+                    all_path.append((project_path.name, function_path.name, work_dir))
         
     with open(res_file, "w") as save_f:
         for project_name, function_name, work_dir in all_path:

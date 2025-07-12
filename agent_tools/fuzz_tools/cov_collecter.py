@@ -1,9 +1,10 @@
 import os
-from tools.fuzz_tools.compiler import Compiler
+from agent_tools.fuzz_tools.compiler import Compiler
 from utils.docker_utils import DockerUtils
 from constants import PROJECT_PATH, CompileResults, COV_WRAP_FILE_NAME, LanguageType, FuzzEntryFunctionMapping
-from tools.code_tools.parsers.c_cpp_parser import CCPPParser
-from tools.code_tools.parsers.java_parser import JavaParser
+from agent_tools.code_tools.parsers.cpp_parser import CPPParser
+from agent_tools.code_tools.parsers.c_parser import CParser
+from agent_tools.code_tools.parsers.java_parser import JavaParser
 from pathlib import Path
 import json
 import shutil
@@ -25,8 +26,10 @@ class CovCollector():
         self.parser = self.get_language_parser()
 
     def get_language_parser(self):
-        if self.project_lang in [LanguageType.C, LanguageType.CPP]:
-            return CCPPParser
+        if self.project_lang == LanguageType.CPP:
+            return CPPParser
+        elif self.project_lang == LanguageType.C:
+            return CParser
         elif self.project_lang == LanguageType.JAVA:
             return JavaParser
         else:

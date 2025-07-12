@@ -1,11 +1,12 @@
 import json
 import os
 import argparse
-from tools.code_tools.lsp_clients.c_lsp_client import CLSPCLient
-from tools.code_tools.lsp_clients.multi_lsp_client import MultilspyClient
+from agent_tools.code_tools.lsp_clients.c_lsp_client import CLSPCLient
+from agent_tools.code_tools.lsp_clients.multi_lsp_client import MultilspyClient
 import asyncio
-from tools.code_tools.parsers.c_cpp_parser import CCPPParser
-from tools.code_tools.parsers.java_parser import JavaParser
+from agent_tools.code_tools.parsers.c_parser import CParser
+from agent_tools.code_tools.parsers.cpp_parser import CPPParser
+from agent_tools.code_tools.parsers.java_parser import JavaParser
 from constants import LanguageType, LSPFunction, LSPResults
 from typing import Any
 from pathlib import Path
@@ -21,8 +22,10 @@ class LSPCodeRetriever():
         self.lsp_client = self.get_lsp_client()
 
     def get_language_parser(self):
-        if self.project_lang in [LanguageType.C, LanguageType.CPP]:
-            return CCPPParser
+        if self.project_lang in [LanguageType.C]:
+            return CParser
+        elif self.project_lang in [LanguageType.CPP]:
+            return CPPParser
         elif self.project_lang == LanguageType.JAVA:
             return JavaParser
         else:
@@ -43,12 +46,15 @@ class LSPCodeRetriever():
             # get the full source code of the symbol
             source_code = parser.get_ref_source(self.symbol_name, lineno) # type: ignore
         else:
-            query_key, source_code, start_line = parser.get_symbol_source(self.symbol_name, lineno, lsp_function)
+            if "::" in self.symbol_name:
+                symbol_name = self.symbol_name.split("::")[-1]
+            else:
+                symbol_name = self.symbol_name
+            # since we have match the namespace when fouding the symbol, there is no need to match the namespace again
+            # the namespace matching in the parser sometimes will fail, so we just use the symbol name directly
+            query_key, source_code, start_line = parser.get_symbol_source(symbol_name, lineno, lsp_function)
 
-        if source_code:
-            return [{"source_code": source_code, "file_path": file_path, "line": lineno, "type": query_key, "start_line": start_line}]
-
-        return []
+        return [{"source_code": source_code, "file_path": file_path, "line": lineno, "type": query_key, "start_line": start_line}]
 
     def fectch_code_from_response(self, response: list[dict[str, Any]], lsp_function: LSPFunction) -> list[dict[str, Any]]:
         """
@@ -119,11 +125,19 @@ class LSPCodeRetriever():
         response = await self.lsp_client.request_workspace_symbols(self.symbol_name)
 
         if not response:
-            print("Empty response. Dot close the server, it will stuck")
             return f"{LSPResults.Error.value}, Empty Response.", []
 
         return LSPResults.Success.value, response
 
+    async def get_all_functions(self) -> tuple[str, list[tuple[str, int, int]]]:
+        
+        # Find declaration
+        response = await self.lsp_client.request_all_functions()
+
+        if not response:
+            return f"{LSPResults.Error.value}, Empty Response.", []
+
+        return LSPResults.Success.value, response
 
     async def get_symbol_info(self) -> tuple[str, list[dict[str, Any]]]:
         """
@@ -142,7 +156,6 @@ class LSPCodeRetriever():
                 return msg, []
         else:
             raise Exception(f"Language {self.project_lang} not supported.")
-
         # all_symbols should be only one
         # if len(all_symbols) > 1:
             # return f"{LSPResults.Error}: More than one symbol found. {all_symbols}", []
@@ -150,18 +163,18 @@ class LSPCodeRetriever():
         print("num of total file: ", len(all_symbols))
 
         final_resp: list[dict[str, Any]] = []
-        all_source_code: list[str] = []
 
         for file_path, lineno, char_pos in all_symbols:
+
+            if file_path.startswith("/usr/include") or file_path.startswith("/usr/local/include"):
+                print(f"Skip system header file: {file_path}")
+                continue
             print("file_path:{}, lineno:{}, char_pos:{}".format(file_path, lineno, char_pos))
             # Define server arguments
             try:
                 response = await self.request_function(file_path,  int(lineno), int(char_pos))
 
-                for res_json in response:
-                    if res_json["source_code"] not in all_source_code:
-                        final_resp.append(res_json)
-                        all_source_code.append(res_json["source_code"])
+                final_resp += response
             except Exception as e:
                 print(f"Error: {e}")
                 return f"{LSPResults.Error.value}: {e}", []
@@ -171,15 +184,19 @@ class LSPCodeRetriever():
     
 async def main():
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('--workdir', type=str, help='The work place that can run bear compile.')
-    parser.add_argument('--lsp-function', type=str, choices=[e.value for e in LSPFunction], help='The LSP function name')
-    parser.add_argument('--symbol-name', type=str, help='The function name or struct name.')
-    parser.add_argument('--lang', type=str, choices=[e.value for e in LanguageType], help='The project language.')
+    parser.add_argument('--workdir', type=str, default="/src/", help='The work place that can run bear compile.')
+    parser.add_argument('--lsp-function', type=str, default="all_symbols", choices=[e.value for e in LSPFunction], help='The LSP function name')
+    parser.add_argument('--symbol-name', type=str, default="", help='The function name or struct name.')
+    parser.add_argument('--lang', type=str, default="C", choices=[e.value for e in LanguageType], help='The project language.')
     args = parser.parse_args()
 
     # the default workdir is the current directory, since we didn't send the compile_comamnd.json to the clangd server
     lsp = LSPCodeRetriever(args.workdir, LanguageType(args.lang), args.symbol_name, LSPFunction(args.lsp_function))
-    msg, res = await lsp.get_symbol_info()
+   
+    if args.lsp_function == LSPFunction.AllSymbols.value:
+        msg, res = await lsp.get_all_functions()
+    else:
+        msg, res = await lsp.get_symbol_info()
 
     file_name = f"{lsp.symbol_name}_{lsp.lsp_function.value}_lsp.json"
     with open(os.path.join("/out", file_name), "w") as f:

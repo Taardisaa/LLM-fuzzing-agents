@@ -56,6 +56,22 @@ class BaseParser:
 
         return call_name_dict[self.project_lang], func_def_name_dict[self.project_lang]
 
+    def exec_query(self, query: Query, query_node: Node, line: int, node_name:str="node_name") -> Optional[Node]:
+            
+            # Execute the query
+            captures = query.captures(query_node)
+            if not captures:
+                return None
+            
+            for source_node in captures[node_name]:
+            
+                # TODO will this find the definition that calls the function?
+                if not source_node.text:
+                    continue
+                if source_node.start_point.row <= line and line <= source_node.end_point.row:  
+                    return source_node
+            return None
+    
     def get_symbol_source(self, symbol_name: str, line: int, lsp_function: LSPFunction) -> tuple[str, str, int]:
         """
         Retrieve the full source code of a symbol based on its start position.
@@ -64,21 +80,7 @@ class BaseParser:
         :param column: The column number of the function's start position (0-based).
         :return: The full source code of the function.
         """
-        def exec_query(query: Query, query_node: Node, line: int, node_name:str="node_name") -> tuple[str, int]:
-            
-            # Execute the query
-            captures = query.captures(query_node)
-            if not captures:
-                return "", 0
-            
-            for source_node in captures[node_name]:
-            
-                # TODO will this find the definition that calls the function?
-                if not source_node.text:
-                    continue
-                if source_node.start_point.row <= line and line <= source_node.end_point.row:  
-                    return source_node.text.decode("utf-8", errors="ignore") , source_node.start_point.row
-            return "", 0
+
      
         # print("language: ", self.project_lang)
         # print("parser_language: ", self.parser_language)
@@ -95,10 +97,10 @@ class BaseParser:
             # Execute the query
             query_str = query_str.format(symbol_name)
             query = self.parser_language.query(query_str)
-            src_code, start_line = exec_query(query, self.tree.root_node, line)
-            if src_code:
+            src_node = self.exec_query(query, self.tree.root_node, line)
+            if src_node:
                 # Decode the source code to a string
-                return key, src_code, start_line
+                return key, src_node.text.decode(), src_node.start_point.row # type: ignore
 
         return "", "", 0
     
@@ -177,6 +179,10 @@ class BaseParser:
     
     def get_ref_source(self, symbol_name: str, line: int) -> str:
 
+        # remove the namespace
+        if "::" in symbol_name:
+            symbol_name = symbol_name.split("::")[-1]
+
         # find the callee node
         callee_node = None
         query = self.parser_language.query(f"({self.call_func_name}) @func_call")
@@ -193,11 +199,20 @@ class BaseParser:
             if not node.text:
                 continue
 
-            source_code = node.text.decode("utf-8", errors="ignore")
-            # function call may span multiple lines so we need to check the range
-            if (node.start_point.row <= line or line <= node.end_point.row) and symbol_name in source_code:
-                callee_node = node
-                break
+            # Decode the source code to a string    
+            id_node = self.match_child_node(node, "identifier", recusive_flag=True)
+            # the function name is under function_declarator
+            if id_node and symbol_name == id_node.text.decode("utf-8", errors="ignore"): # type: ignore
+                callee_node = id_node
+            
+            # source_code = node.text.decode("utf-8", errors="ignore")
+            # # function call may span multiple lines so we need to check the range
+            # if (node.start_point.row <= line and line <= node.end_point.row) and symbol_name in source_code:
+            #     print("node text: ", source_code)
+            #     print("start: ", node.start_point.row, " end: ", node.end_point.row)
+            #     print("line: ", line)
+            #     callee_node = node
+            #     break
         
         if not callee_node:
             return ""
@@ -272,27 +287,30 @@ class BaseParser:
         for node in captures["func_def"]:
 
             try:
-                for child in node.children:
-                    # TODO this only test on C/C++ language
-                    if child.type != "function_declarator":
-                        continue
-                    
-                    # the function name is under function_declarator
-                    if child.children[0].text and function_name == child.children[0].text.decode("utf-8", errors="ignore"):
-                        return node
+                # TODO changed this, check whether it is correct
+                id_node = self.match_child_node(node, "identifier", recusive_flag=True)
+                # the function name is under function_declarator
+                if id_node and function_name == id_node.text.decode("utf-8", errors="ignore"): # type: ignore
+                    return node
             except Exception as e:
                 print("Error in parsing the function definition: ", e)
         
         return None
        
-    def get_child_node(self, node: Node, field_name: str) -> Optional[Node]:
+
+    def match_child_node(self, node:Node, node_type:str, recusive_flag: bool=False) -> Optional[Node]:
         """
-        Get the child node of a node by field name.
-        :param node: The parent node.
-        :param field_name: The field name of the child node.
-        :return: The child node.
+        Match the fisrt child node of a given node based on the node type.
+        :param node: The parent node to search within.
+        :param node_type: The type of the child node to match.
+        :param recusive_flag: If True, recursively search through all children.
+        :return: The matched child node or None if not found.
         """
         for child in node.children:
-            if child.type == field_name:
+            if child.type == node_type:
                 return child
-        return None
+            if recusive_flag:
+                result = self.match_child_node(child, node_type, recusive_flag)
+                if result:
+                    return result
+        return None 

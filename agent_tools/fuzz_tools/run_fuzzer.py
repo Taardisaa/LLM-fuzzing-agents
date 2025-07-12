@@ -1,6 +1,6 @@
 import os
 import subprocess as sp
-from tools.fuzz_tools.log_parser import FuzzLogParser
+from agent_tools.fuzz_tools.log_parser import FuzzLogParser
 from constants import FuzzResult, LanguageType
 import time
 from pathlib import Path

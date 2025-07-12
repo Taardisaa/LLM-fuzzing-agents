@@ -1,5 +1,4 @@
 from typing import Annotated
-import subprocess as sp
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
@@ -18,17 +17,17 @@ from typing import Callable, Any
 from langchain_core.tools import  StructuredTool
 from langgraph.prebuilt import ToolNode # type: ignore
 import json
-from tools.fuzz_tools.log_parser import CompileErrorExtractor
+from agent_tools.fuzz_tools.log_parser import CompileErrorExtractor
 from prompts.raw_prompts import CODE_FIX_PROMPT, EXTRACT_CODE_PROMPT, FUZZ_FIX_PROMPT, INIT_PROMPT
 from utils.misc import save_code_to_file, extract_name
-from tools.fuzz_tools.compiler import Compiler
-from tools.code_retriever import CodeRetriever
-from tools.fuzz_tools.run_fuzzer import FuzzerRunner
+from agent_tools.fuzz_tools.compiler import Compiler
+from agent_tools.code_retriever import CodeRetriever
+from agent_tools.fuzz_tools.run_fuzzer import FuzzerRunner
 from constants import FuzzResult,  ALL_FILE_EXTENSION, DockerResults
 from utils.oss_fuzz_utils import OSSFuzzUtils
 from utils.docker_utils import DockerUtils
 from pathlib import Path
-from docker.models.containers import Container
+from bench_cfg import BenchConfig
 
 class CodeAnswerStruct(BaseModel):
     """Split the answer into the content before the code, the code, and the content after the code."""
@@ -107,13 +106,15 @@ class InitGenerator:
 
 
 class CompilerWraper(Compiler):
-    def __init__(self, oss_fuzz_dir: Path, project_name: str, new_project_name: str,
+    def __init__(self, oss_fuzz_dir: Path, project_name: str, new_project_name: str, code_retriever: CodeRetriever,
                      project_lang: LanguageType, harness_dict:dict[str, Path], 
-                     save_dir: Path, logger: logging.Logger):
+                     save_dir: Path, cache_dir: Path, logger: logging.Logger):
         super().__init__(oss_fuzz_dir, project_name, new_project_name)
         self.logger = logger
         self.project_lang = project_lang
+        self.code_retriever = code_retriever
         self.save_dir = save_dir
+        self.cache_dir = cache_dir
         self.harness_dict = harness_dict
         self.start_index = 0
 
@@ -138,21 +139,28 @@ class CompilerWraper(Compiler):
 #         return "\n".join(final_msg)
 
     # TODO change this
-    def _match_link_pattern(self, harness_file_name:str, pattern:str,  error_msg: str) -> bool:
+    def _match_link_pattern(self, harness_file:Path, pattern:str,  error_msg: str) -> bool:
            # Find all matches
         matches = re.findall(pattern, error_msg)
-
+        harness_file_name = harness_file.name
+        local_harness_path = self.oss_fuzz_dir / "projects" / self.new_project_name / harness_file.name 
+        harness_code = local_harness_path.read_text()
         # Print the results
-        for file_name, _ in matches:
+        for file_name, function in matches:
             # print(f"Error in file {file_name} for function {function_name}")
             if file_name.strip() != harness_file_name.strip():
                 return True
+            else:
+                # only for undefined reference
+                header = list(self.code_retriever.get_header_helper(function, forward=True))
+                if header and all(h.strip() in harness_code for h in header):
+                    return True
         return False
 
     def is_link_error(self, error_msg: str, harness_path: Path) -> bool:
         '''Check if the error message is a link error'''
 
-        harness_file_name = harness_path.name
+        # harness_file_name = harness_path.name
         # 
         link_error_pattern = r"DWARF error: invalid or unhandled FORM value: 0x25"
         if link_error_pattern not in error_msg:
@@ -160,11 +168,11 @@ class CompilerWraper(Compiler):
         
         # Regular expression to match the errored file and undefined function
         # TODO only test on C Projects
-        undefined_pattern = r"([\w\-]+\.(?:c|o)):.*undefined reference to `([^']+)'"
-        multi_definiation_pattern = r"([\w\-]+\.(?:c|o)):.*multiple definition of `([^']+)'"
+        undefined_pattern = r"([\w\-]+\.(?:c|o|cc|cpp)):.*undefined reference to `([^']+)'"
+        multi_definiation_pattern = r"([\w\-]+\.(?:c|o|cc|cpp)):.*multiple definition of `([^']+)'"
         # Find all matches
         for pattern in [undefined_pattern, multi_definiation_pattern]:
-            if self._match_link_pattern(harness_file_name, pattern, error_msg):
+            if self._match_link_pattern(harness_path, pattern, error_msg):
                 return True
      
         return False
@@ -365,54 +373,37 @@ class AgentFuzzer():
     FuzzerNode = "Fuzzer"
     FixBuilderNode = "FixBuilder"
 
-    def __init__(self, n_examples: int, example_mode: str, model_name: str, temperature: float, oss_fuzz_dir: Path, project_name: str, function_signature: str,
-                 usage_token_limit: int, model_token_limit: int, run_time: int, max_fix: int, max_tool_call: int,  
-                 clear_msg_flag: bool, save_dir: Path, cache_dir: Path, n_run: int = 1):
-        
-        self.n_examples = n_examples
-        self.example_mode = example_mode
+    def __init__(self,  benchcfg: BenchConfig, function_signature: str, project_name: str, n_run: int):
+        self.benchcfg = benchcfg
         self.eailier_stop_flag = False
-        self.n_run = n_run
-        self.model_name = model_name
-        self.temperature = temperature
-        self.oss_fuzz_dir = oss_fuzz_dir
+
         self.project_name = project_name
         self.function_signature = function_signature
-        self.usage_token_limit = usage_token_limit
-        self.model_token_limit = model_token_limit
-        self.run_time = run_time
-        self.max_fix = max_fix
-        self.max_tool_call = max_tool_call
-        self.cache_dir = cache_dir
-        self.clear_msg_flag = clear_msg_flag
-
+        self.n_run = n_run
         # random generate a string for new project name
         random_str = ''.join(random.choices("abcdefghijklmnopqrstuvwxyz", k=16))
-        self.new_project_name = f"run{self.n_run}_{random_str}"
-        function_name = extract_name(function_signature)
-        self.save_dir = save_dir / project_name.lower() / function_name.lower() / self.new_project_name
+        self.new_project_name = f"run{n_run}_{random_str}"
+        function_name = extract_name(function_signature, keep_namespace=True)
+        function_name = function_name.replace("::", "_")  # replace namespace with underscore
+        self.save_dir = self.benchcfg.save_root / project_name.lower() / function_name.lower() / self.new_project_name
         self.logger = self.setup_logging()
 
-        self.oss_tool = OSSFuzzUtils(self.oss_fuzz_dir, self.project_name, self.new_project_name)
+        self.oss_tool = OSSFuzzUtils(self.benchcfg.oss_fuzz_dir, self.project_name, self.new_project_name)
         self.project_lang = self.oss_tool.get_project_language()
 
-        self.docker_tool = DockerUtils(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang)
-        init_flag = self.init_workspace()
+        self.docker_tool = DockerUtils(self.benchcfg.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang)
+        self.init_workspace()
+        self.code_retriever = CodeRetriever(self.benchcfg.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.benchcfg.cache_root, self.logger)
 
-        if not init_flag:
-            self.eailier_stop_flag = True
-            self.logger.error("Failed to initialize the workspace. Return")
-            return 
-        
         # collect all harness_path, fuzzer pairs
         _fuzzer_name,  _harness_path = self.oss_tool.get_harness_and_fuzzer()
-        self.harness_pairs = self.cahche_harness_fuzzer_pairs()
+        self.harness_pairs = self.cache_harness_fuzzer_pairs()
         if  _fuzzer_name not in self.harness_pairs:
             self.harness_pairs[_fuzzer_name] = _harness_path
         else:
             # move the harness file to the first
             self.harness_pairs = {_fuzzer_name: _harness_path, **self.harness_pairs}
-
+       
     def setup_logging(self):
 
         # Create a logger
@@ -449,13 +440,13 @@ class AgentFuzzer():
     def init_workspace(self):
         '''Initialize the workspace'''
 
-        dst_path = self.oss_fuzz_dir / "projects" / self.new_project_name
+        dst_path = self.benchcfg.oss_fuzz_dir / "projects" / self.new_project_name
         if dst_path.exists():
             # clean the directory
             shutil.rmtree(dst_path)
 
         # copy a backup of the project
-        scr_path = self.oss_fuzz_dir / "projects" / self.project_name
+        scr_path = self.benchcfg.oss_fuzz_dir / "projects" / self.project_name
         shutil.copytree(scr_path, dst_path, dirs_exist_ok=True)
 
         shutil.copy(os.path.join(PROJECT_PATH, "constants.py"), dst_path)
@@ -476,22 +467,12 @@ class AgentFuzzer():
         self.logger.info("Build Image a new project: {}, build res:{}".format(self.new_project_name, build_res))
         
         # failed to build the image
-        if not build_res:
-            return False
-
-        # cache the compile_commands.json
-        if self.project_lang in [LanguageType.C, LanguageType.CPP]:
-            compile_res = self.cache_compile_commands()
-            if not compile_res:
-                return False
-        
-        return True
-
+        assert build_res, "Failed to build the docker image for {}".format(self.new_project_name)
 
     def modify_dockerfile(self):
         '''Copy the harness file to overwrite all existing harness files'''
         # write copy in dockerfile and re-build the image
-        project_path = self.oss_fuzz_dir /  "projects" / self.new_project_name
+        project_path = self.benchcfg.oss_fuzz_dir /  "projects" / self.new_project_name
         with open(project_path / 'Dockerfile', 'a') as f:
             # Add additional statement in dockerfile to overwrite with generated fuzzer
             f.write(f'\nCOPY *.py  .\n')
@@ -507,52 +488,17 @@ class AgentFuzzer():
             f.write('RUN pip install "tree-sitter<=0.24.0"\n')
             f.write('RUN pip install "multilspy==0.0.15"\n')
 
-
-    def cache_compile_commands(self) -> bool:
-        
-        cmd_json_name = "compile_commands.json"
-        json_path = self.cache_dir / self.project_name / cmd_json_name
-        if json_path.exists():
-            self.logger.info(f"Using Cached compile_commands.json")
-            return True
-       
-        # make the cache directory
-        dir_path = self.cache_dir / self.project_name
-        dir_path.mkdir(parents=True, exist_ok=True)
-
-        # run bear to generate compile_commands.json
-        def bear_call_back(container: Container) -> str:
-            res = self.docker_tool.contrainer_exec_run(container, "bear compile")
-            self.logger.info(f"bear res: {res.splitlines()[-2:]}")
-
-            container_info = container.attrs 
-            workdir = container_info['Config'].get('WorkingDir', '')
-          
-            try:
-                sp.run(f"docker cp {container.id}:{os.path.join(workdir, cmd_json_name)}  {dir_path}", shell=True, check=True, stdout=sp.PIPE, stderr=sp.PIPE)
-            except Exception as e:
-                self.logger.error(f"docker copy error: {e}")
-                return DockerResults.Error.value
-
-            # cache the fuzzer name
-            fuzzer_str = self.docker_tool.contrainer_exec_run(container, "find /out/ -maxdepth 1 -type f")
-            with open(self.cache_dir / self.project_name / "fuzzer.txt", 'w') as f:
-                f.write(fuzzer_str)
-
-            return DockerResults.Success.value
-
-        compile_cmd = self.docker_tool.run_call_back(bear_call_back)
-        if compile_cmd.startswith(DockerResults.Error.value):
-            self.logger.error(f"No {cmd_json_name} , Exit")
-            return False    
-        return True
-
     def find_fuzzers(self) -> list[str]:
         '''Find all fuzzers in the project directory'''
-          
-        fuzz_path = self.cache_dir / self.project_name / "fuzzer.txt"
+
+        fuzz_path = self.benchcfg.cache_root / self.project_name / "fuzzer.txt"
         if not fuzz_path.exists():
-            return []
+            fuzz_path.parent.mkdir(parents=True, exist_ok=True)
+            # cache the fuzzer name
+            fuzzer_str = self.docker_tool.exec_in_container(self.code_retriever.container_id, "find /out/ -maxdepth 1 -type f")
+            with open(fuzz_path, 'w') as f:
+                f.write(fuzzer_str)
+           
 
         fuzzer_str = fuzz_path.read_text()
 
@@ -599,16 +545,22 @@ class AgentFuzzer():
                     _temp_list.append(file_path)
                  
             if len(_temp_list) > 1:
-                self.logger.info(f"Multiple harness files for {fuzzer_name}, {_temp_list}")
-                continue
-            
+
+                # choose the one with fuzz in file name
+                fuzz_entry_list = [file_path for file_path in _temp_list if "fuzz" in file_path.lower()]
+                if len(fuzz_entry_list) == 1:
+                    _temp_list = fuzz_entry_list
+                # skip this fuzzer
+                else:
+                    self.logger.error(f"Multiple harness files with fuzz entry function for {fuzzer_name}, {_temp_list}, skip this fuzzer")
+
             # only one harness file
             if len(_temp_list) == 1:
                 harness_dict[fuzzer_name] = _temp_list[0]
 
         return harness_dict
 
-    def cahche_harness_fuzzer_pairs(self)-> dict[str, Path]:
+    def cache_harness_fuzzer_pairs(self)-> dict[str, Path]:
         '''Cache the harness and fuzzer pairs'''
 
         def to_path(harness_fuzzer_dict: dict[str, str]) -> dict[str, Path]:
@@ -620,7 +572,7 @@ class AgentFuzzer():
             return new_harness_fuzzer_dict
         
 
-        json_path = self.cache_dir / self.project_name / "harness_fuzzer_pairs.json"
+        json_path = self.benchcfg.cache_root / self.project_name / "harness_fuzzer_pairs.json"
         if json_path.exists():
             with open(json_path, 'r') as f:
                 harness_fuzzer_dict = json.load(f)
@@ -641,6 +593,7 @@ class AgentFuzzer():
     def clean_workspace(self):
         '''Clean the workspace'''
         try:        
+            self.code_retriever.remove_container()
 
             # first remove the out directory
             self.docker_tool.clean_build_dir()
@@ -649,11 +602,10 @@ class AgentFuzzer():
             self.docker_tool.remove_image()
             self.logger.info("remove the docker image for {}".format(self.new_project_name))
             # remove the project directory
-            shutil.rmtree(self.oss_fuzz_dir / "projects" / self.new_project_name)
+            shutil.rmtree(self.benchcfg.oss_fuzz_dir / "projects" / self.new_project_name)
 
             # clean the build directory
-            shutil.rmtree(self.oss_fuzz_dir / "build" / "out"/ self.new_project_name)
-
+            shutil.rmtree(self.benchcfg.oss_fuzz_dir / "build" / "out"/ self.new_project_name)
             # remove the corpus, needs root permission
             # corpus_dir = os.path.join(self.save_dir, "corpora")
             # if os.path.exists(corpus_dir):
@@ -709,25 +661,24 @@ class AgentFuzzer():
 
     def build_graph(self)-> StateGraph:
 
-        llm = ChatOpenAI(model=self.model_name)
-        code_retriever = CodeRetriever(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.cache_dir, self.logger)
-       
+        llm = ChatOpenAI(model=self.benchcfg.model_name)
+
         # decide whether to use the tool according to the header_desc_mode    
    
         header_tool = StructuredTool.from_function( # type: ignore
-                func=code_retriever.get_symbol_header,
+                func=self.code_retriever.get_symbol_header,
                 name="get_symbol_header",
-                description=code_retriever.get_symbol_header.__doc__,
+                description=self.code_retriever.get_symbol_header.__doc__,
             )
         definition_tool = StructuredTool.from_function( # type: ignore
-                func=code_retriever.get_symbol_definition,
+                func=self.code_retriever.get_symbol_definition,
                 name="get_symbol_definition",
-                description=code_retriever.get_symbol_definition.__doc__,
+                description=self.code_retriever.get_symbol_definition.__doc__,
             )
         reference_tool = StructuredTool.from_function( # type: ignore
-                func=code_retriever.get_symbol_references,
+                func=self.code_retriever.get_symbol_references,
                 name="get_symbol_references",
-                description=code_retriever.get_symbol_references.__doc__,
+                description=self.code_retriever.get_symbol_references.__doc__,
             )
 
         tools = [header_tool, definition_tool, reference_tool]
@@ -744,21 +695,21 @@ class AgentFuzzer():
         llm_code_extract: BaseChatModel = llm.with_structured_output(CodeAnswerStruct) # type: ignore
         code_formater = CodeFormatTool(llm_code_extract, EXTRACT_CODE_PROMPT)
 
-        draft_responder = InitGenerator(llm_init_generator, self.max_tool_call, continue_flag=False, save_dir=self.save_dir, 
+        draft_responder = InitGenerator(llm_init_generator, self.benchcfg.max_tool_call, continue_flag=False, save_dir=self.save_dir, 
                                         code_callback=code_formater.extract_code, logger=self.logger)
 
         #  compile_fix_prompt: str, fuzz_fix_prompt: str, clear_msg_flag: bool)
-        fix_builder = FixerPromptBuilder(CODE_FIX_PROMPT, FUZZ_FIX_PROMPT, self.project_lang, self.clear_msg_flag)
+        fix_builder = FixerPromptBuilder(CODE_FIX_PROMPT, FUZZ_FIX_PROMPT, self.project_lang, self.benchcfg.clear_msg_flag)
 
         # code fixer needs old project name
-        code_fixer = CodeFixer(llm_code_fixer, self.max_fix, self.max_tool_call,  self.save_dir, self.cache_dir,
+        code_fixer = CodeFixer(llm_code_fixer, self.benchcfg.max_fix, self.benchcfg.max_tool_call,  self.save_dir, self.benchcfg.cache_root,
                                  code_callback=code_formater.extract_code, logger=self.logger)
 
-        fuzzer = FuzzerWraper(self.oss_fuzz_dir, self.new_project_name, self.project_lang, 
-                             self.run_time,  self.save_dir,  self.logger)
+        fuzzer = FuzzerWraper(self.benchcfg.oss_fuzz_dir, self.new_project_name, self.project_lang, 
+                             self.benchcfg.run_time,  self.save_dir,  self.logger)
         
-        compiler = CompilerWraper(self.oss_fuzz_dir, self.project_name, self.new_project_name, 
-                                  self.project_lang, self.harness_pairs, self.save_dir, self.logger)
+        compiler = CompilerWraper(self.benchcfg.oss_fuzz_dir, self.project_name, self.new_project_name, self.code_retriever,
+                                  self.project_lang, self.harness_pairs, self.save_dir, self.benchcfg.cache_root, self.logger)
 
         # build the graph
         builder = StateGraph(FuzzState)
@@ -813,99 +764,3 @@ class AgentFuzzer():
             print(f"Step {i}")
             step["messages"][-1].pretty_print() # type: ignore
             # pass
-
-
-# def process_project(llm_name, ossfuzz_dir, project_name, function_name, save_dir, run_time, max_iterations, header_desc_mode):
-
-#     agent_fuzzer = AgentFuzzer(llm_name, ossfuzz_dir, project_name, function_name, save_dir, run_time, max_iterations, header_desc_mode)
-#     atexit.register(agent_fuzzer.clean_workspace)
-
-#     try:
-#         # Your main logic here
-#         agent_fuzzer.build_graph()
-#         agent_fuzzer.run_graph()
-
-#     except Exception as e:
-#         print(e)
-#         print("Program interrupted.")
-#     finally:
-#         agent_fuzzer.clean_workspace()
-
-# def run_parallel():
-#     # build graph
-#     ossfuzz_dir = "/home/yk/code/oss-fuzz/"
-#     # absolute path
-#     save_dir = os.path.join(PROJECT_PATH, "outputs")
-#     llm_name = "gpt-4o"
-#     run_time = 6
-#     max_iterations = 5
-#     header_desc_mode = "detailed"
-#     function_list = []
-#     # read benchmark names
-#     bench_dir = os.path.join(PROJECT_PATH, "benchmark-sets", "all")
-#     all_files = os.listdir(bench_dir)
-
-#     # sort 
-#     all_files.sort()
-
-#     # resume from project name
-#     # resume_project_name = "njs.yaml"
-#     # index = all_files.index(resume_project_name)
-#     index = 0
-
-#     for file in all_files[index:]:
-#         # read yaml file
-#         with open(os.path.join(bench_dir, file), 'r') as f:
-#             data = yaml.safe_load(f)
-#             project_name = data.get("project")
-#             lang_name = data.get("language")
-#             project_harness = data.get("target_path")
-
-#             if project_name != "tinyxml2":
-#                 continue
-
-#             if lang_name not in ["c++", "c"]:
-#                 continue
-        
-#             for function in data.get("functions"):
-#                 function_list.append((project_name, function["signature"]))
-
-#     print("total projects:", len(function_list))
-#     with Pool(processes=os.cpu_count()//2) as pool:
-
-#         for project_name, function_name in function_list:
-#             # pool.apply(process_project, args=(llm_name, ossfuzz_dir, project_name,function_name, save_dir, run_time, max_iterations))
-#             pool.apply_async(process_project, args=(llm_name, ossfuzz_dir, project_name, function_name, save_dir, run_time, max_iterations, header_desc_mode))
-
-#         pool.close()
-#         pool.join()
-
-
-
-# if __name__ == "__main__":
-
-#     # run_parallel()
-#     # exit()
-    
-#     # build graph
-#     ossfuzz_dir = Path("/home/yk/code/oss-fuzz/")
-#     project_name = "coturn"
-
-#     # absolute path
-#     save_dir = Path("/home/yk/code/LLM-reasoning-agents/outputs/agent/apr17/")
-#     cache_dir = Path("/home/yk/code/LLM-reasoning-agents/cache/")
-#     llm_name = "gpt-4o"
-#     # function_sig = r"void tinyxml2::XMLElement::SetAttribute(const char *, const char *)"
-#     function_sig = r"bool stun_is_response(const stun_buffer *)"
-#     # function_sig = "cJSON * cJSON_Parse(const char *)"
-
-#     agent_fuzzer = AgentFuzzer(1, "rank", llm_name, 0.7, ossfuzz_dir, project_name, function_sig, 
-#                                usage_token_limit=1000, model_token_limit=8096,
-#                                run_time=1, max_fix=5, max_tool_call=30, clear_msg_flag=True, 
-#                                save_dir=save_dir, cache_dir=cache_dir)
-    
-#     atexit.register(agent_fuzzer.clean_workspace)
-
-#     graph = agent_fuzzer.build_graph()
-#     agent_fuzzer.run_graph(graph)
-    

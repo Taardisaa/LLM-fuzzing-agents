@@ -67,6 +67,7 @@ class Compiler():
 
         # run the build command
         try:
+            # self.docker_tool.run_cmd(["find", "-name", "comp"])
             sp_result = sp.run(self.build_harness_cmd,
                    stdout=sp.PIPE,  # Capture standard output
                     # Important!, build fuzzer error may not appear in stderr, so redirect stderr to stdout

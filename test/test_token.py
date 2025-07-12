@@ -1,8 +1,11 @@
-import tiktoken
+import re
 
-text = "// This is an example sentence."
-encoding = tiktoken.encoding_for_model("gpt-3.5-turbo") # Or your model
-tokens = encoding.encode(text)
-num_tokens = len(tokens)
-print(tokens)
-print(f"Number of tokens: {num_tokens}")
+text = """// 165:     // Cleanup
+// 166:     free_sip_msg(msg);
+// 167:     free(body);
+// 168: 
+// 169:     return 0;
+// 170: }"""
+
+
+print(cleaned)

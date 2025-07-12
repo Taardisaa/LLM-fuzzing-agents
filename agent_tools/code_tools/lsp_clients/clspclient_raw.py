@@ -145,7 +145,7 @@ class ClangdLspClient:
         params = {
             "query": symbol_name,  # Empty query returns all symbols
         }
-        response = await self.send_request("workspace/symbol", params, timeout=1)
+        response = await self.send_request("workspace/symbol", params, timeout=5)
         if "error" in response:
             print(f"Error finding workspace symbols: {response['error']}")
         else:

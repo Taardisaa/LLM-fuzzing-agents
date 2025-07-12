@@ -1,6 +1,6 @@
-from tools.fuzz_tools.cov_collecter import CovCollector
-from tools.fuzz_tools.compiler import Compiler
-from tools.fuzz_tools.run_fuzzer import FuzzerRunner
+from agent_tools.fuzz_tools.cov_collecter import CovCollector
+from agent_tools.fuzz_tools.compiler import Compiler
+from agent_tools.fuzz_tools.run_fuzzer import FuzzerRunner
 from pathlib import Path
 from constants import CompileResults
 import random

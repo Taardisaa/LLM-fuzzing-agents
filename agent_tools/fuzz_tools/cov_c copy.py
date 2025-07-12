@@ -19,7 +19,7 @@ def setup_logging():
     )
     return logging.getLogger(__name__)
 
-def reply_corpus(fuzzer_name: str, corpus_path: str, function_name: str, merge: bool = False, new_corpus_dir: Path=None, timeout: int = 100) -> Optional[int]:
+def reply_corpus(fuzzer_name: str, corpus_path: str, function_name: str, merge: bool = False, new_corpus_dir: Optional[Path]=None, timeout: int = 100) -> Optional[int]:
     """
     Run fuzzer and extract edge coverage.
     
@@ -40,7 +40,7 @@ def reply_corpus(fuzzer_name: str, corpus_path: str, function_name: str, merge: 
         
         if merge and new_corpus_dir:
             cmd.append("-merge=1")
-            cmd.append(new_corpus_dir)
+            cmd.append(str(new_corpus_dir))
         
         cmd.append(corpus_path)
         
@@ -72,7 +72,7 @@ def reply_corpus(fuzzer_name: str, corpus_path: str, function_name: str, merge: 
 
         if matches:
             first_num = matches.group(1)  # '4'
-            second_num = matches.group(2) # '4'
+            # second_num = matches.group(2) # '4'
             return int(first_num)
         else:
             logger.error("No match")

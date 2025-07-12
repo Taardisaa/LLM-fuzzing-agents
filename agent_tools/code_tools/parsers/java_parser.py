@@ -1,5 +1,5 @@
 from constants import LanguageType, LSPFunction
-from tools.code_tools.parsers.base_parser import BaseParser
+from agent_tools.code_tools.parsers.base_parser import BaseParser
 from pathlib import Path
 from typing import Optional
 

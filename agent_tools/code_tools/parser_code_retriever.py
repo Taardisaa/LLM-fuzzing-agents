@@ -3,8 +3,9 @@ import os
 import argparse
 import subprocess as sp
 import random
-from tools.code_tools.parsers.c_cpp_parser import CCPPParser
-from tools.code_tools.parsers.java_parser import JavaParser
+from agent_tools.code_tools.parsers.cpp_parser import CPPParser
+from agent_tools.code_tools.parsers.c_parser import CParser
+from agent_tools.code_tools.parsers.java_parser import JavaParser
 from constants import LanguageType, LSPFunction, LSPResults
 from pathlib import Path
 from typing import Any
@@ -41,8 +42,10 @@ class ParserCodeRetriever():
         self.lang_parser = self.get_language_parser()
     
     def get_language_parser(self):
-        if self.project_lang in [LanguageType.C, LanguageType.CPP]:
-            return CCPPParser
+        if self.project_lang in [LanguageType.C]:
+            return CParser
+        elif self.project_lang in [LanguageType.CPP]:
+            return CPPParser
         elif self.project_lang == LanguageType.JAVA:
             return JavaParser
         else:
@@ -86,11 +89,17 @@ class ParserCodeRetriever():
                 If the symbol is not found, an empty string is returned.
         """
         
+        if "::" in self.symbol_name:
+            # if the symbol name contains namespace, we need to remove it
+            symbol_name = self.symbol_name.split("::")[-1]
+        else:
+            symbol_name = self.symbol_name
+            
         # Execute `find` command to recursively list files and directories
         if self.lsp_function == LSPFunction.References:
-            cmd = f"grep --binary-files=without-match -rn {self.project_root} -e  '{self.symbol_name}('"
+            cmd = f"grep --binary-files=without-match -rn /src -e  '{symbol_name}('"
         else:
-            cmd = f"grep --binary-files=without-match -rnw {self.project_root} -e  {self.symbol_name}"
+            cmd = f"grep --binary-files=without-match -rnw /src -e  {symbol_name}"
 
         results = sp.run(cmd, shell=True, stdout=sp.PIPE, stderr=sp.STDOUT,  text=True)
         output = results.stdout.strip()
@@ -126,7 +135,7 @@ class ParserCodeRetriever():
             if self.lsp_function == LSPFunction.Definition and ";" in content:
                 continue
             # find character position
-            char_pos = content.find(self.symbol_name)
+            char_pos = content.find(symbol_name)
             # the line number is 1-based, we need to convert it to 0-based
             filtered_lines.append((file_path, int(lineno)-1, char_pos))
 
@@ -147,8 +156,9 @@ class ParserCodeRetriever():
                         final_resp.append(res_json)
                         all_source_code.append(res_json["source_code"])
                 
-                if self.lsp_function in [LSPFunction.Declaration, LSPFunction.Definition] and len(final_resp) > 0:
-                    return LSPResults.Success.value, final_resp
+                # find all, this may takes a long time
+                # if self.lsp_function in [LSPFunction.Declaration, LSPFunction.Definition] and len(final_resp) > 0:
+                    # return LSPResults.Success.value, final_resp
                 
             except Exception as e:
                 return f"{LSPResults.Error}: {e}", []
@@ -237,14 +247,13 @@ class ParserCodeRetriever():
             msg, res_list =  self.get_symbol_info_helper()
             return msg, res_list
 
-      
     
 def main():
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('--workdir', type=str, default="/home/yk/oss_projects/bind9", help='The search directory.')
+    parser.add_argument('--workdir', type=str, default="/src/bloaty", help='The search directory.')
     parser.add_argument('--lsp-function', type=str, choices=[e.value for e in LSPFunction], default="declaration", help='The LSP function name')
-    parser.add_argument('--symbol-name', type=str, default="dns_rdataclass_in" ,help='The function name or struct name.')
-    parser.add_argument('--lang', type=str, choices=[e.value for e in LanguageType], default="C" ,help='The project language.')
+    parser.add_argument('--symbol-name', type=str, default="google::protobuf::Message::InternalSerializeWithCachedSizesToArray" ,help='The function name or struct name.')
+    parser.add_argument('--lang', type=str, choices=[e.value for e in LanguageType], default="CPP" ,help='The project language.')
     args = parser.parse_args()
     
 
@@ -255,8 +264,8 @@ def main():
         msg = f"{LSPResults.Error}: {e}"
         res = []
 
-    # print(f"Message: {msg}")
-    # print(f"Response: {res}")
+    print(f"Message: {msg}")
+    print(f"Response: {res}")
     
     if args.lsp_function == LSPFunction.StructFunctions.value:
         file_name = f"{Path(lsp.symbol_name).stem}_struct_functions_parser.json"

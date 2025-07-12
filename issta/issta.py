@@ -3,12 +3,12 @@ from langchain_openai import ChatOpenAI
 import os
 from langgraph.graph import StateGraph, END, START  # type: ignore
 import random
-from constants import LanguageType, CompileResults, ToolDescMode, FuzzEntryFunctionMapping, LSPResults, Retriever, FuzzResult, LSPFunction
+from constants import LanguageType, CompileResults, FuzzEntryFunctionMapping, LSPResults, Retriever, FuzzResult, LSPFunction
 from langchain_core.tools import StructuredTool
 from langgraph.prebuilt import ToolNode # type: ignore
 from prompts.raw_prompts import  EXTRACT_CODE_PROMPT
 from utils.misc import save_code_to_file, filter_examples, extract_name, add_lineno_to_code
-from tools.code_retriever import CodeRetriever, header_desc_mapping
+from agent_tools.code_retriever import CodeRetriever
 from agents.reflexion_agent import CodeFormatTool, InitGenerator, FuzzerWraper, CompilerWraper, CodeFixer, AgentFuzzer, FuzzState, CodeAnswerStruct
 import io
 import contextlib
@@ -18,10 +18,14 @@ from issta.semantic_check import SemaCheck
 from pathlib import Path
 from typing import Any
 from langchain_core.language_models import BaseChatModel
-
+from bench_cfg import BenchConfig
+import json
+from agent_tools.code_search import CodeSearch
+from constants import CodeSearchAPIName
 
 ISSTA_C_PROMPT = '''
 // The following is a fuzz driver written in C language, complete the implementation. Output the continued code in reply only. 
+{tool_prompt}
 
 // @ examples of API usage
 {function_usage}
@@ -32,7 +36,8 @@ ISSTA_C_PROMPT = '''
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-
+#include <unistd.h>   // For write(), close(), unlink()
+#include <fcntl.h>    // For file control options
 {header_files}
 
 
@@ -47,7 +52,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size)
 ISSTA_CPP_PROMPT = '''
 // The following is a fuzz driver written in C++ language, complete the implementation. Output the continued code in reply only.
 
-
+{tool_prompt}
 // @ examples of API usage 
 {function_usage}
 
@@ -58,6 +63,9 @@ ISSTA_CPP_PROMPT = '''
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <unistd.h>   // For write(), close(), unlink()
+#include <fcntl.h>    // For file control options
+
 {header_files}
 
 {function_document}
@@ -103,13 +111,15 @@ Do not change the function signature of the harness function.
 
 '''
 
-tool_prompts = '''
+tool_prompt = '''
+/*
 You can call the following tools to get more information about the code:
 - get_symbol_header: Get the header file of a symbol.
 - get_symbol_definition: Get the definition of a symbol. (Details of the symbol, like the function body)
 - get_symbol_declaration: Get the declaration of a symbol.
 - view_code: View the code around the given file and targe line.
 - get_struct_related_functions: Get the functions related to a struct. This can be used to get the functions that operate on a struct, like the initialization, destruction functions.
+*/
 '''
 
 REMOVED_FUNC = ['spdk_json_parse', 'GetINCHIfromINCHI', 'GetINCHIKeyFromINCHI', 'GetStructFromINCHI',
@@ -120,20 +130,24 @@ REMOVED_FUNC = ['spdk_json_parse', 'GetINCHIfromINCHI', 'GetINCHIKeyFromINCHI', 
                 'dns_message_checksig', 'dns_rdata_fromtext']
 
 class FixerPromptBuilder:
-    def __init__(self, oss_fuzz_dir: Path,  project_name: str, new_project_name: str,
-                 cache_dir: Path, usage_token_limit: int, logger: logging.Logger,
-                 compile_fix_prompt: str, fuzz_fix_prompt: str, project_lang: LanguageType,
+    def __init__(self, oss_fuzz_dir: Path,  project_name: str, new_project_name: str, code_retriever: CodeRetriever,
+                 cache_dir: Path, usage_token_limit: int, model_token_limit: int, logger: logging.Logger,
+                 compile_fix_prompt: str, fuzz_fix_prompt: str, compile_code_info:bool, fuzz_code_info:bool,  project_lang: LanguageType,
                     clear_msg_flag: bool):
         
         self.oss_fuzz_dir = oss_fuzz_dir
         self.new_project_name = new_project_name
         self.project_name = project_name
+        self.code_retriever = code_retriever
         self.cache_dir = cache_dir
         self.logger = logger
         self.usage_token_limit = usage_token_limit
+        self.model_token_limit = model_token_limit
 
         self.compile_fix_prompt = compile_fix_prompt
         self.fuzz_fix_prompt = fuzz_fix_prompt
+        self.fuzz_code_info = fuzz_code_info
+        self.compile_code_info = compile_code_info
         self.project_lang = project_lang
         self.clear_msg_flag = clear_msg_flag
 
@@ -141,12 +155,21 @@ class FixerPromptBuilder:
         '''
         Build the prompt for the code fixer. If you need to customize the prompt, you can override this function.
         '''
+        enc = tiktoken.encoding_for_model("gpt-4o")
+        while len(enc.encode(error_msg)) > self.model_token_limit // 2:
+            # remove the first line until the error message is short enough
+            error_msg = error_msg.split("\n", 1)[1]
+
         return self.compile_fix_prompt.format(harness_code=add_lineno_to_code(harness_code, 1), error_msg=error_msg, project_lang=self.project_lang)
 
     def build_fuzz_prompt(self, harness_code: str, error_msg: str)-> str:
         '''
         Build the prompt for the code fixer. If you need to customize the prompt, you can override this function.
         '''
+
+        if not self.fuzz_code_info:
+            return self.fuzz_fix_prompt.format(harness_code=add_lineno_to_code(harness_code, 1), error_msg=error_msg, project_lang=self.project_lang)
+
         # extract 
         #1 0x5639df576b54 in ixmlDocument_createAttributeEx /src/pupnp/ixml/src/document.c:269:26
         reversed_stack = error_msg.split("\n")[::-1]
@@ -170,8 +193,7 @@ class FixerPromptBuilder:
             else:
                 _, _, _, func_name, _ = row_data
                 
-                retriever = CodeRetriever(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.cache_dir , self.logger)
-                usages = retriever.get_symbol_references(func_name, Retriever.Parser)
+                usages = self.code_retriever.get_symbol_references(func_name, Retriever.Parser)
                 # filter the usage including the Function entry
                 example = filter_examples(usages, self.project_lang, self.usage_token_limit)
                
@@ -213,7 +235,7 @@ class SemaCheckNode:
         self.oss_fuzz_dir = oss_fuzz_dir
         self.project_name = project_name
         self.new_project_name = new_project_name
-        self.func_name = extract_name(function_signature)
+        self.func_name = extract_name(function_signature, keep_namespace=True)
         self.logger = logger
         self.checker = SemaCheck(oss_fuzz_dir, project_name, new_project_name, self.func_name, project_lang)
 
@@ -233,20 +255,10 @@ class SemaCheckNode:
 
 class ISSTAFuzzer(AgentFuzzer):
     SemanticCheckNode = "SemanticCheckNode"
-    def __init__(self, n_examples: int, example_mode: str, model_name: str, temperature:float, oss_fuzz_dir: Path, 
-                 project_name: str, function_signature: str, usage_token_limit: int, 
-                 model_token_limit: int, run_time: int, max_fix: int, max_tool_call: int,
-                 clear_msg_flag:bool, save_dir: Path, cache_dir: Path, 
-                 n_run: int = 1, tool_flag: bool=False):
-        
-        super().__init__(n_examples, example_mode, model_name, temperature, oss_fuzz_dir, project_name, function_signature, usage_token_limit, model_token_limit,
-                         run_time, max_fix, max_tool_call, clear_msg_flag,  save_dir, cache_dir, n_run)
-        self.n_examples = n_examples
-        self.example_mode = example_mode
-        self.model_token_limit = model_token_limit
-        self.tool_flag = tool_flag
+    def __init__(self, benchcfg: BenchConfig, function_signature: str, project_name: str, n_run: int):
+        super().__init__(benchcfg, function_signature, project_name, n_run)
 
-    def filer_examples(self, example_list: list[dict[str, str]]) -> list[dict[str, str]]:
+    def filter_examples(self, example_list: list[dict[str, str]]) -> list[dict[str, str]]:
 
         # filter the usage including the Function entry
         filter_code_usage: list[dict[str, str]] = []
@@ -254,7 +266,7 @@ class ISSTAFuzzer(AgentFuzzer):
             if FuzzEntryFunctionMapping[self.project_lang] in code["source_code"]:
                 continue
             # token limit
-            if len(code["source_code"].split()) > self.usage_token_limit:
+            if len(code["source_code"].split()) > self.benchcfg.usage_token_limit:
                 continue
             filter_code_usage.append(code)
 
@@ -262,12 +274,12 @@ class ISSTAFuzzer(AgentFuzzer):
 
     def comment_example(self, example_list: list[dict[str, str]]) -> str:
         # leave some tokens for the prompt
-        margin_token = self.usage_token_limit
+        margin_token = self.benchcfg.usage_token_limit
         enc = tiktoken.encoding_for_model("gpt-4o")
 
         final_example_str = ""
-        
-        total_token = self.usage_token_limit
+
+        total_token = self.benchcfg.usage_token_limit
         n_used = 0
         for i, example in enumerate(example_list):
             function_usage = example["source_code"]
@@ -276,7 +288,7 @@ class ISSTAFuzzer(AgentFuzzer):
 
             # token limit
             total_token += len(enc.encode(function_usage))
-            if total_token > self.model_token_limit - margin_token:
+            if total_token > self.benchcfg.model_token_limit - margin_token:
                 n_used = i-1
                 break
             else:
@@ -287,16 +299,20 @@ class ISSTAFuzzer(AgentFuzzer):
     
     def select_example(self, example_list: list[dict[str, str]]) -> str:
 
-        if self.n_examples == -1:
-            self.n_examples = len(example_list)
+        if self.benchcfg.n_examples == 0:
+            self.logger.info("No examples selected, return empty string")
+            return ""
         
-        if self.example_mode == "random":
+        if self.benchcfg.n_examples == -1:
+            self.benchcfg.n_examples = len(example_list)
+        
+        if self.benchcfg.example_mode == "random":
             
-            random.shuffle(example_list)
-            selected_list = example_list[:self.n_examples]
+            # do not repeat the examples for different runs
+            selected_list = example_list[(self.n_run-1)*self.benchcfg.n_examples:self.n_run*self.benchcfg.n_examples]
             return self.comment_example(selected_list)
         
-        elif self.example_mode == "rank":
+        elif self.benchcfg.example_mode == "rank":
 
             rank_list:list[dict[str, str]] = []
             other_list:list[dict[str, str]] = []
@@ -311,64 +327,89 @@ class ISSTAFuzzer(AgentFuzzer):
             
             # select the top n examples first from rank list, shuffle the rank list
             # shuffle the rank list
-            random.shuffle(rank_list)
-            random.shuffle(other_list)
+            # random.shuffle(rank_list)
+            # random.shuffle(other_list)
 
-            selected_list = rank_list[:self.n_examples]
-            n_rest = self.n_examples - len(selected_list)
+            # do not repeat the examples for different runs
+            selected_list = rank_list[(self.n_run-1)*self.benchcfg.n_examples:self.n_run*self.benchcfg.n_examples]
+            n_rest = self.benchcfg.n_examples - len(selected_list)
 
             if n_rest > 0:
                 # if the rank list is empty, use the other examples
-                selected_list += other_list[:n_rest]
+                selected_list += other_list[(self.n_run-1)*n_rest:self.n_run*n_rest]
             return self.comment_example(selected_list)
         
         return ""
 
     def build_init_prompt(self, prompt_template: str) -> str:
 
-        # fill the template
-        # {function_signature}
 
-        # function_signature = self.function_signature
-       
         # {function_name}
         # Remove the parameters by splitting at the first '('
-        function_name = extract_name(self.function_signature)
-
-        # {header_files}
-        retriever = CodeRetriever(self.oss_fuzz_dir, self.project_name, self.new_project_name, LanguageType.C, self.cache_dir , self.logger)
+        function_name = extract_name(self.function_signature, keep_namespace=False)
         
+        # {header_files}
         #TODO only include function header may not be enough
-        header = retriever.get_symbol_header(function_name)
+        header = self.code_retriever.get_symbol_header(function_name)
 
-        if header == LSPResults.NoResult.value:
-            self.logger.warning(f"No header found for {function_name}, Exit")
-            self.eailier_stop_flag = True
-            return ""
-
-        header = f'#include "{header}"'
+        # if header.startswith(LSPResults.NoResult.value):
+            # self.logger.warning(f"No header found for {function_name}, Exit")
+            # raise ValueError(f"No header found for {function_name}, Exit")
+    
+        header_string = ""
+        if not header.startswith(LSPResults.NoResult.value):
+            for h in header.splitlines():
+                header_string += f'#include "{h}"'
 
         # {function_usage}
         # get the function usage from the project and the public
         # project_code_usage = retriever.get_symbol_references(function_name, retriever=Retriever.LSP)
-        project_code_usage = retriever.get_symbol_references(function_name, retriever=Retriever.Parser)
-        filter_code_usage = self.filer_examples(project_code_usage)
-        
+        if self.benchcfg.example_source == "sourcegraph":
+            # get from public code
+
+            search_api = CodeSearchAPIName.Sourcegraph
+            cached_file = self.benchcfg.cache_root / self.project_name / f"{function_name}_references_{search_api.value}.json"
+            if cached_file.exists():
+                self.logger.info(f"Found cached code usage for {function_name} in {search_api.value}, use it")
+                # read the json file
+                with open(cached_file, "r") as f:
+                    code_usages = json.load(f)
+            else:
+                # search the code usage from the public code
+                self.logger.info(f"Searching {function_name} from {search_api.value}...")
+
+                code_search = CodeSearch(CodeSearchAPIName.Sourcegraph, self.project_lang)
+                searched_res = code_search.search(function_name, num_results=0)
+
+                  # dump the results to json file
+                if len(searched_res) > 0:
+                    code_usages = [{"source_code": code} for code in searched_res]
+                    cached_file.parent.mkdir(parents=True, exist_ok=True)
+                    with open(cached_file, "w") as f:
+                        json.dump(code_usages, f, indent=4)
+                else:
+                    self.logger.warning(f"No usage found for {function_name} in {search_api.value}, use empty string")
+                    # use empty string
+                    code_usages = []  
+        else:
+            code_usages = self.code_retriever.get_symbol_references(function_name, retriever=Retriever.Parser)
+      
+        filter_code_usage = self.filter_examples(code_usages) # type: ignore
+
         self.logger.info(f"Found {len(filter_code_usage)} usage in the project after removing harness.")
         if len(filter_code_usage) == 0:
             function_usage = ""
         else:
             function_usage = self.select_example(filter_code_usage)
         
-        # TODO, no code from public do we need the namespace?
-        # code_search = CodeSearch(function_name, self.new_project_name)
-
+        _functions = self.code_retriever.get_all_functions()
+        
         # TODO, no document
         # {function_document}
         function_document = ""
         # {function_signature}
         # function_signature = self.function_signature
-        retrieved_signature = retriever.get_symbol_info(function_name, lsp_function=LSPFunction.Declaration)
+        retrieved_signature = self.code_retriever.get_symbol_info(function_name, lsp_function=LSPFunction.Declaration)
         if len(retrieved_signature) == 0:
             self.logger.warning(f"Can not retrieve signature for {function_name}, use the provided signature from xml")
         elif len(retrieved_signature) > 1:
@@ -378,8 +419,12 @@ class ISSTAFuzzer(AgentFuzzer):
             if function_signature.replace(" ", "").replace("\n", "").replace("\t", "") != self.function_signature.replace(" ", "").replace("\n", "").replace("\t", "")+";":
                 self.logger.error(f"Retrieved signature is different from the provided one: {function_signature} vs {self.function_signature}")
 
-        prompt_template = prompt_template.format(header_files=header, function_usage=function_usage, function_document=function_document,
-                                             function_signature=self.function_signature, function_name=function_name)
+        if self.benchcfg.tool_flag:
+            local_tool_prompt = tool_prompt
+        else:
+            local_tool_prompt = ""
+        prompt_template = prompt_template.format(header_files=header_string, function_usage=function_usage, function_document=function_document,
+                                             function_signature=self.function_signature, function_name=function_name, tool_prompt=local_tool_prompt)
         prompt_template += "{\n"
         save_code_to_file(prompt_template, self.save_dir / "prompt.txt")
 
@@ -407,40 +452,39 @@ class ISSTAFuzzer(AgentFuzzer):
         
     def build_graph(self) -> StateGraph:
 
-        llm = ChatOpenAI(model=self.model_name, temperature=self.temperature)
+        llm = ChatOpenAI(model=self.benchcfg.model_name, temperature=self.benchcfg.temperature)
 
-        code_retriever = CodeRetriever(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.cache_dir, self.logger)
         tools:list[StructuredTool] = []
         header_tool = StructuredTool.from_function(  # type: ignore
-                func=code_retriever.get_symbol_header,
+                func=self.code_retriever.get_symbol_header,
                 name="get_symbol_header",
-                description=header_desc_mapping[ToolDescMode.Detailed],
+                description=self.code_retriever.get_symbol_header.__doc__,
             )
         definition_tool = StructuredTool.from_function( # type: ignore
-            func=code_retriever.get_symbol_definition,
+            func=self.code_retriever.get_symbol_definition,
             name="get_symbol_definition",
-            description=code_retriever.get_symbol_definition.__doc__,
+            description=self.code_retriever.get_symbol_definition.__doc__,
         )
 
         declaration_tool = StructuredTool.from_function( # type: ignore
-            func=code_retriever.get_symbol_declaration,
+            func=self.code_retriever.get_symbol_declaration,
             name="get_symbol_declaration",
-            description=code_retriever.get_symbol_declaration.__doc__,
+            description=self.code_retriever.get_symbol_declaration.__doc__,
         )
         view_tool = StructuredTool.from_function( # type: ignore
-            func=code_retriever.view_code,
+            func=self.code_retriever.view_code,
             name="view_code",
-            description=code_retriever.view_code.__doc__,
+            description=self.code_retriever.view_code.__doc__,
         )
 
         struct_tool = StructuredTool.from_function(  # type: ignore
-            func=code_retriever.get_struct_related_functions,
+            func=self.code_retriever.get_struct_related_functions,
             name="get_struct_related_functions",
-            description=code_retriever.get_struct_related_functions.__doc__,
+            description=self.code_retriever.get_struct_related_functions.__doc__,
         )
         
-        tools.append(header_tool)  
-        if self.tool_flag:
+        # tools.append(header_tool)  
+        if self.benchcfg.tool_flag:
             tools.append(definition_tool) 
             tools.append(declaration_tool)  
             tools.append(view_tool)  
@@ -453,27 +497,31 @@ class ISSTAFuzzer(AgentFuzzer):
         tool_llm: BaseChatModel = llm.bind_tools(tools, parallel_tool_calls=False) # type: ignore
 
 
-        draft_responder = InitGenerator(tool_llm, self.max_tool_call, continue_flag=True, save_dir=self.save_dir, 
+        draft_responder = InitGenerator(tool_llm, self.benchcfg.max_tool_call, continue_flag=True, save_dir=self.save_dir, 
                                         code_callback=code_formater.extract_code, logger=self.logger)
 
         global fuzz_fix_prompt, compile_fix_prompt
-        if self.tool_flag:
-            fuzz_fix_prompt += tool_prompts 
-            compile_fix_prompt += tool_prompts 
-
+        if self.benchcfg.tool_flag:
+            local_fuzz_fix_prompt = fuzz_fix_prompt +  tool_prompt 
+            local_compile_fix_prompt = compile_fix_prompt + tool_prompt 
+        else:
+            local_fuzz_fix_prompt = fuzz_fix_prompt
+            local_compile_fix_prompt = compile_fix_prompt
         #  compile_fix_prompt: str, fuzz_fix_prompt: str, clear_msg_flag: bool)
-        fix_builder = FixerPromptBuilder(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.cache_dir, self.usage_token_limit, self.logger,
-                                        compile_fix_prompt, fuzz_fix_prompt, self.project_lang, clear_msg_flag=self.clear_msg_flag)
+        fix_builder = FixerPromptBuilder(self.benchcfg.oss_fuzz_dir, self.project_name, self.new_project_name, self.code_retriever, self.benchcfg.cache_root, 
+                                         self.benchcfg.usage_token_limit, self.benchcfg.model_token_limit, self.logger,
+                                        local_compile_fix_prompt, local_fuzz_fix_prompt,  self.benchcfg.compile_code_info, 
+                                        self.benchcfg.fuzz_code_info, self.project_lang, clear_msg_flag=self.benchcfg.clear_msg_flag)
 
-        code_fixer = CodeFixer(tool_llm, self.max_fix, self.max_tool_call,  self.save_dir, self.cache_dir,
+        code_fixer = CodeFixer(tool_llm, self.benchcfg.max_fix, self.benchcfg.max_tool_call,  self.save_dir, self.benchcfg.cache_root,
                                  code_callback=code_formater.extract_code, logger=self.logger)
 
-        fuzzer = FuzzerWraper(self.oss_fuzz_dir, self.new_project_name, self.project_lang, 
-                             self.run_time,  self.save_dir,  self.logger)
+        fuzzer = FuzzerWraper(self.benchcfg.oss_fuzz_dir, self.new_project_name, self.project_lang, 
+                             self.benchcfg.run_time,  self.save_dir,  self.logger)
         
-        compiler = CompilerWraper(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang,
-                                   self.harness_pairs, self.save_dir, self.logger)
-        checker = SemaCheckNode(self.oss_fuzz_dir, self.project_name, self.new_project_name, self.function_signature, self.project_lang, self.logger)
+        compiler = CompilerWraper(self.benchcfg.oss_fuzz_dir, self.project_name, self.new_project_name, self.code_retriever, self.project_lang, 
+                                   self.harness_pairs, self.save_dir, self.benchcfg.cache_root, self.logger)
+        checker = SemaCheckNode(self.benchcfg.oss_fuzz_dir, self.project_name, self.new_project_name, self.function_signature, self.project_lang, self.logger)
 
         # build the graph
         builder = StateGraph(FuzzState)
@@ -508,8 +556,6 @@ class ISSTAFuzzer(AgentFuzzer):
 
 
     def run_graph(self, graph: StateGraph) -> None:
-        if self.eailier_stop_flag:
-            return
         
         # read prompt according to the project language (extension of the harness file)
         if self.oss_tool.get_extension(None) == LanguageType.CPP:
@@ -521,8 +567,6 @@ class ISSTAFuzzer(AgentFuzzer):
         
         # build the prompt for initial generator
         generator_prompt = self.build_init_prompt(generator_prompt_temlpate)
-        if self.eailier_stop_flag:
-            return
         
         # plot_graph(graph)
         config = {"configurable": {"thread_id": "1"}, "recursion_limit": 200} # type: ignore
@@ -541,4 +585,3 @@ class ISSTAFuzzer(AgentFuzzer):
                 f.write(output.getvalue() + "\n")  # Write captured output to file
 
                 f.flush()
-                

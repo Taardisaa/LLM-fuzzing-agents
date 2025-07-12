@@ -422,16 +422,15 @@ class CodeChecker():
 						return True
 		return False
 
-from tools.fuzz_tools.compiler import Compiler
+from agent_tools.fuzz_tools.compiler import Compiler
 from utils.oss_fuzz_utils import OSSFuzzUtils
 import shutil
-from tools.fuzz_tools.compiler import Compiler
+from agent_tools.fuzz_tools.compiler import Compiler
 from pathlib import Path
 from constants import CompileResults, LanguageType
 import random
 from utils.oss_fuzz_utils import OSSFuzzUtils
 from utils.docker_utils import DockerUtils
-from utils.misc import extract_name
 
 
 class SemaCheck():
