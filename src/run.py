@@ -2,21 +2,23 @@ import os
 import pickle
 import signal
 import sys
+import time
 import yaml
 from multiprocessing import Pool
 from utils.misc import extract_name, get_benchmark_functions
-from issta.issta import ISSTAFuzzer
+from harness_agent.main import ISSTAFuzzer
 from agent_tools.results_analysis import run_agent_res
 from bench_cfg import BenchConfig
 import traceback  # Add this at the top
 
 class Runner:
-    def __init__(self, benchcfg: BenchConfig):
-        """Initialize the Runner with configuration from a BenchConfig object.
+    def __init__(self, cfg_path: str):
+        """Initialize the Runner with configuration from a YAML file.
         Args:
-            benchcfg (BenchConfig): The BenchConfig object containing configuration settings.
+            cfg_path (str): Path to the YAML configuration file
         """
-        self.config = benchcfg
+        self.config = BenchConfig(cfg_path)
+        self.cfg_path = cfg_path
         
     def get_successful_func(self) -> list[str]:
     
@@ -75,19 +77,49 @@ class Runner:
             agent_fuzzer.clean_workspace()
     
 
+    def has_run(self, function_signature: str, project_name: str, n_run: int) -> bool:
+        function_name = extract_name(function_signature, keep_namespace=True)
+        function_name = function_name.replace("::", "_")  # replace namespace with underscore
+        save_dir = self.config.save_root / project_name.lower() / function_name.lower() 
+        
+        if not save_dir.exists():
+            return False
+        
+        run_flag = False
+        for path in save_dir.iterdir():  # ensure the directory exists
+            if path.name.startswith(f"run{n_run}"):
+                # print(f"Skipping {function_name} in {project_name} for run {n_run}, already exists.")
+                run_flag = True
+                break
+
+        return run_flag
+
     def run_all(self, max_num_function: int, function_dict: dict[str, list[str]], n_run: int=1):
         """Run the fuzzer on all functions in parallel."""
 
         with Pool(processes=self.config.num_processes) as pool:
+            
+            count = 0
             for i in range(max_num_function):
                 for key in function_dict.keys():
                     if i >= len(function_dict[key]):
                         continue
                     function_signature = function_dict[key][i]
                     project_name = key
-                    print(f"{i+1}th of functions in {key}: {len(function_dict[key])}")
-                    
-                    pool.apply_async(Runner.run_one, args=(self.config, function_signature, project_name, n_run))
+
+                    # Check if the function has already been run
+                    if self.has_run(function_signature, project_name, n_run):
+                        continue
+                    port = self.config.ports[count % len(self.config.ports)]
+                    config_with_port = BenchConfig(self.cfg_path)
+                    # Update the base URL with the selected port
+                    config_with_port.base_url = f"{self.config.base_url}:{port}"
+                    pool.apply_async(Runner.run_one, args=(config_with_port, function_signature, project_name, n_run))
+
+                    count += 1
+
+            print(f"Iteration {n_run} of {self.config.iterations}: {count} functions to run")
+ 
             pool.close()
             pool.join()
 
@@ -103,12 +135,13 @@ class Runner:
         config_file = os.path.join(self.config.save_root, "config.yaml")
         with open(config_file, 'w') as f:
             yaml.dump(self.config, f)
-        function_dicts = get_benchmark_functions(self.config.bench_dir,
-                                                 allowed_projects=[self.config.project_name] if self.config.project_name else [],
+        function_dicts = get_benchmark_functions(self.config.benchmark_dir,
+                                                 allowed_projects=self.config.project_name if self.config.project_name else [],
                                                  allowed_langs=["c++", "c"],
                                                  allowed_functions=self.config.function_signatures, func_per_project=1000)
 
        
+        start_time = time.time()
         for i in range(self.config.iterations):
             iter_res = self.config.save_root / "res_{}.txt".format(i+1)
             if iter_res.exists():
@@ -122,20 +155,12 @@ class Runner:
             if total_function == 0:
                 print("All functions are successful. Exiting...")
                 break
-            print(f"Iteration {i+1} of {self.config.iterations}: {total_function} functions to run")
-
-            # print the function name
-            for key in todo_function_dicts.keys():
-                print(f"Project: {key}, Number of functions: {len(todo_function_dicts[key])}")
-                for func_sig in todo_function_dicts[key]:
-                    print(f"  - {extract_name(func_sig, keep_namespace=True)}")
-
-            # print("total Projects: ", len(todo_function_dicts.keys()))
-            # print("total functions: ", total_function)
-            # max_num_function = 1
+        
             self.run_all(max_num_function, todo_function_dicts, n_run=i+1)
 
-            run_agent_res(self.config.save_root, method="issta", n_run=i+1)
+            run_agent_res(self.config.save_root, semantic_mode="eval", n_run=i+1)
+
+        print(f"Total time taken: {time.time()-start_time:.2f} seconds")
 
     # def run_single(self):
     #     """Run single execution with configuration from YAML file."""
@@ -157,16 +182,49 @@ if __name__ == "__main__":
     #     print("Usage: python run.py <config_path>")
     #     sys.exit(1)
 
-    config_path = "/home/yk/code/LLM-reasoning-agents/cfg/issta_gpt4.yaml"
-    bench_cfg = BenchConfig(config_path)
-    runner = Runner(bench_cfg)
+    # 
+    cfg_list= [
+        # "/home/yk/code/LLM-reasoning-agents/cfg/qcoder_header_agent.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/qcoder_header_oss_fuzz.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/qcoder_example_public_rank.yaml",
+        #  "/home/yk/code/LLM-reasoning-agents/cfg/qcoder_example_public_random.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/qcoder_example_project_rank.yaml",
+        #  "/home/yk/code/LLM-reasoning-agents/cfg/qcoder_example_project_random.yaml",
+        #  "/home/yk/code/LLM-reasoning-agents/cfg/qcoder_code_info_agent.yaml",
+        #  "/home/yk/code/LLM-reasoning-agents/cfg/qcoder_code_info_oss_fuzz.yaml",
+        #  "/home/yk/code/LLM-reasoning-agents/cfg/qcoder_code_info_issta.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/claude_code_info_agent.yaml",
+        #  "/home/yk/code/LLM-reasoning-agents/cfg/claude_header_agent.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/claude_header_static.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/claude_header_oss_fuzz.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/glm_code_info_agent.yaml"
+        # "/home/yk/code/LLM-reasoning-agents/cfg/claude_header_agent.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/claude_header_no.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/claude_example_public_rank.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/claude_example_public_random.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/claude_header_oss_fuzz.yaml"
+        # "/home/yk/code/LLM-reasoning-agents/cfg/claude_code_info_oss_fuzz.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_header_no.yaml",
+        #  "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_header_agent.yaml",
+        #  "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_header_oss_fuzz.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/claude_code_info_oss_fuzz.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_example_public_rank.yaml",
+        "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_example_public_random.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_code_info_agent.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_code_info_oss_fuzz.yaml",
+        #   "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_example_project_random.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/deepseek_header_oss_fuzz.yaml"
+        # "/home/yk/code/LLM-reasoning-agents/cfg/wild_gpt41_code_info_agent.yaml"
+    ]
+    for config_path in cfg_list:
+        runner = Runner(config_path)
 
-    # Set up signal handling for graceful termination
-    def signal_handler(sig, frame): # type: ignore
-        print('Exiting gracefully...')
-        sys.exit(0)
+        # Set up signal handling for graceful termination6
+        def signal_handler(sig, frame): # type: ignore
+            print('Exiting gracefully...')
+            sys.exit(0)
 
-    signal.signal(signal.SIGINT, signal_handler) # type: ignore
-    
-    # Run the main function
-    runner.run()
+        signal.signal(signal.SIGINT, signal_handler) # type: ignore
+        
+        # Run the main function
+        runner.run()

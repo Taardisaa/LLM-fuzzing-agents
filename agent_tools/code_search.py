@@ -4,9 +4,10 @@ import requests
 from agent_tools.code_tools.parsers.cpp_parser import CPPParser
 from agent_tools.code_tools.parsers.c_parser import CParser
 import time
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import subprocess 
 import json
+from bench_cfg import BenchConfig
 
 def get_jaccard_sim(str1: str, str2: str) -> float: 
     a = set(str1.split()) 
@@ -246,6 +247,31 @@ class CodeSearch():
 
         return code_snippet
 
+
+
+def search_public_usage(search_api: CodeSearchAPIName, function_name: str, project_name: str, project_lang: LanguageType, benchcfg: BenchConfig) -> list[dict[str, str]]:
+
+    assert search_api in [CodeSearchAPIName.Sourcegraph], f"Unsupported API: {search_api}"
+    # ranked cache file
+    cached_file = benchcfg.cache_root / project_name / f"{function_name}_references_{search_api.value}.json"
+    if cached_file.exists():
+        # read the json file
+        with open(cached_file, "r") as f:
+            code_usages = json.load(f)
+        return code_usages
+    else:
+        # search the code usage from the public code
+
+        code_search = CodeSearch(search_api, project_lang)
+        searched_res = code_search.search(function_name, num_results=0)
+
+        # dump the results to json file
+        code_usages: list[dict[str, Any]] = [{"source_code": code} for code in searched_res]
+        cached_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(cached_file, "w") as f:
+            json.dump(code_usages, f, indent=4)
+    
+        return code_usages
 
 if __name__ == "__main__":
     code_search = CodeSearch(CodeSearchAPIName.Sourcegraph, LanguageType.C)

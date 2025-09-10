@@ -6,16 +6,17 @@ import subprocess as sp
 import os
 import shutil
 from pathlib import Path
+from typing import Optional
 
 class Compiler():
 
-    def __init__(self, oss_fuzz_dir: Path, project_name: str, new_project_name: str):
+    def __init__(self, oss_fuzz_dir: Path, benchmark_dir: Path, project_name: str, new_project_name: str):
 
         self.oss_fuzz_dir = oss_fuzz_dir
         self.project_name = project_name
         self.new_project_name = new_project_name
        
-        self.oss_tool = OSSFuzzUtils(oss_fuzz_dir, project_name, new_project_name)
+        self.oss_tool = OSSFuzzUtils(oss_fuzz_dir, benchmark_dir, project_name, new_project_name)
         self.project_lang =  self.oss_tool.get_project_language()
         self.docker_tool = DockerUtils(oss_fuzz_dir, project_name, new_project_name, self.project_lang)
 
@@ -25,7 +26,7 @@ class Compiler():
                             # "build_fuzzers", "--clean", self.new_project_name,  "--", "-fsanitize=fuzzer", "-fsanitize=address", "-fsanitize-coverage=trace-pc-guard"]
         self.build_image_cmd =  self.oss_tool.get_script_cmd("build_image")
 
-    def write_dockerfile(self, harness_path: Path) -> None:
+    def write_dockerfile(self, harness_path: Path, cmd: Optional[str]=None, write_flag: bool=True) -> None:
         '''Copy the harness file to overwrite all existing harness files'''
         # write copy in dockerfile and re-build the image
 
@@ -39,12 +40,16 @@ class Compiler():
         else:
             shutil.copy(docker_file_path, docker_file_bak)
 
+        if not write_flag:
+            return
         with open(docker_file_path, 'a') as f:
             # Add additional statement in dockerfile to overwrite with generated fuzzer
             f.write(f'\nCOPY {os.path.basename(harness_path)} {harness_path}\n')
 
-
-    def compile(self,  harness_code: str, harness_path: Path, fuzzer_name: str) -> tuple[CompileResults, str]:
+            if cmd:
+                f.write(f'{cmd}\n')
+    
+    def compile(self,  harness_code: str, harness_path: Path, fuzzer_name: str, cmd: Optional[str]=None) -> tuple[CompileResults, str]:
         '''Compile the generated harness code'''
 
         # Run build.sh. There are two possible outcomes:
@@ -52,7 +57,7 @@ class Compiler():
         # 3. The code compiles but has a compile error. The code should be fixed.
 
         # write the dockerfile
-        self.write_dockerfile(harness_path)
+        self.write_dockerfile(harness_path, cmd)
         
         # save the target to the project
         local_harness_path = self.oss_fuzz_dir / "projects" / self.new_project_name / harness_path.name 

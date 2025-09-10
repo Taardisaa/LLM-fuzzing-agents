@@ -90,30 +90,30 @@ common_query_dict = {
 
 }
 
-related_query_dict = {
-            "normal_ret":   """
-            (
-            declaration
-                declarator: (function_declarator
-                declarator: (identifier) @func_name
-                parameters: (parameter_list
-                    (parameter_declaration
-                    type: (_) @type
-                    declarator: (_) @value))))@node_name
-            """,
-            "pointer_ret": """
-            (
-            declaration
-                declarator: (pointer_declarator
-                declarator: (function_declarator
-                declarator: (identifier) @func_name
-                parameters: (parameter_list
-                    (parameter_declaration
-                    type: (_) @type
-                    declarator: (_) @value)))))@node_name
-            """,
+# related_query_dict = {
+#             "normal_ret":   """
+#             (
+#             declaration
+#                 declarator: (function_declarator
+#                 declarator: (identifier) @func_name
+#                 parameters: (parameter_list
+#                     (parameter_declaration
+#                     type: (_) @type
+#                     declarator: (_) @value))))@node_name
+#             """,
+#             "pointer_ret": """
+#             (
+#             declaration
+#                 declarator: (pointer_declarator
+#                 declarator: (function_declarator
+#                 declarator: (identifier) @func_name
+#                 parameters: (parameter_list
+#                     (parameter_declaration
+#                     type: (_) @type
+#                     declarator: (_) @value)))))@node_name
+#             """,
 
-}
+# }
 
 func_declaration_query_dict = {
   "declaration": """(declaration
@@ -168,9 +168,6 @@ def_query_dict.update(common_query_dict)
 class CParser(BaseParser):
     def __init__(self, file_path: Optional[Path], source_code: Optional[str] = None,  project_lang: LanguageType = LanguageType.C):
         super().__init__(file_path, source_code,  decl_query_dict, def_query_dict, func_declaration_query_dict, LanguageType.C)
-
-
-
 
 # Example usage
 if __name__ == "__main__":

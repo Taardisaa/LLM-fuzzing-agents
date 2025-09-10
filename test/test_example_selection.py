@@ -6,7 +6,7 @@ import tiktoken
 from typing import Any
 
 enc = tiktoken.encoding_for_model("gpt-4o")
-def replace_cached_example(cache_dir: Path, bench_dir:Path, llm_name:str = "gpt-4"):
+def replace_cached_example(cache_dir: Path, bench_dir:Path, llm_name:str = "gpt-4.1"):
 
     all_functions = get_benchmark_functions(bench_dir, func_per_project=1000)
     
@@ -19,8 +19,11 @@ def replace_cached_example(cache_dir: Path, bench_dir:Path, llm_name:str = "gpt-
             
             function_name = extract_name(function_sig)
             json_file = cache_dir / project_name  / f"{function_name}_references_parser.json"
+            save_json_file = cache_dir / project_name / f"{function_name}_references_parser_{llm_name}.json"
             if not json_file.exists():
                 print(f"file not exists: {json_file}")
+                exit(0)
+            if save_json_file.exists():
                 continue
 
             print(f"processing {json_file.name}")
@@ -32,13 +35,8 @@ def replace_cached_example(cache_dir: Path, bench_dir:Path, llm_name:str = "gpt-
             llm_selector = LLMSelector(llm_name)
             
             res_list:list[dict[str, Any]] = []            
-            write_flag = True
             for example_json in json_data:
                 
-                if "selection_score" in example_json:
-                    write_flag = False
-                    break
-
                 source_code = example_json["source_code"]
                 if len(enc.encode(source_code)) > 1000:
                     print(f"source code is too long: {json_file.name}")
@@ -53,9 +51,8 @@ def replace_cached_example(cache_dir: Path, bench_dir:Path, llm_name:str = "gpt-
                 res_list.append(example_json)
            
             # Write the modified JSON data back to the file
-            if write_flag:
-                with open(json_file, 'w') as f:
-                    json.dump(res_list, f, indent=4)
+            with open(save_json_file, 'w') as f:
+                json.dump(res_list, f, indent=4)
 
             # exit(0)
             
@@ -63,4 +60,4 @@ if __name__ == "__main__":
     # Example usage
     cache_dir = "/home/yk/code/LLM-reasoning-agents/cache"
     bench_dir = "/home/yk/code/LLM-reasoning-agents/benchmark-sets/ntu/"
-    replace_cached_example(Path(cache_dir), Path(bench_dir), llm_name="gpt-4-0613") 
+    replace_cached_example(Path(cache_dir), Path(bench_dir), llm_name="qwen/qwen3-coder") 

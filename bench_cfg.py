@@ -16,7 +16,7 @@ class BenchConfig:
         # Initialize all parameters as class members with defaults from config
         self.oss_fuzz_dir = Path(self.config.get('oss_fuzz_dir', '/home/yk/code/oss-fuzz/'))
         self.cache_root = Path(self.config.get('cache_root', "/home/yk/code/LLM-reasoning-agents/cache/"))
-        self.bench_dir = Path( self.config.get('bench_dir', os.path.join(PROJECT_PATH, "benchmark-sets", "ntu")))
+        self.benchmark_dir = Path( self.config.get('bench_dir', os.path.join(PROJECT_PATH, "benchmark-sets", "ntu")))
         self.save_root = Path(self.config.get('save_root', ""))
 
         # absolute path
@@ -24,6 +24,9 @@ class BenchConfig:
             self.save_root = PROJECT_PATH /  self.save_root
 
         self.model_name = self.config.get('model_name', "gpt-4-0613")
+        self.base_url = self.config.get('base_url', "http://localhost")
+        self.ports = self.config.get('ports', [11434, 11435])
+        self.reasoning = self.config.get('reasoning', False)
         self.temperature = self.config.get('temperature', 0.7)
         self.run_time = self.config.get('run_time', 1)
         self.max_fix = self.config.get('max_fix', 5)
@@ -34,16 +37,18 @@ class BenchConfig:
         self.example_mode = self.config.get('example_mode', "rank")
         self.example_source = self.config.get('example_source', "project")
         self.iterations = self.config.get('iterations', 3)
-        self.num_processes = self.config.get('num_processes', os.cpu_count() // 2) # type: ignore
-        self.project_name = self.config.get('project_name')
+        self.num_processes = self.config.get('num_processes', os.cpu_count() // 3) # type: ignore
+        self.project_name = self.config.get('project_name', [])
         self.function_signatures = self.config.get('function_signatures', [])
 
-        self.compile_code_info = self.config.get('compile_code_info', False)
-        self.fuzz_code_info = self.config.get('fuzz_code_info', False)
+        self.fixing_mode = self.config.get('fixing_mode', "issta")
 
         self.clear_msg_flag = self.config.get('clear_msg_flag', True)
-        self.tool_flag = self.config.get('tool_flag', False)
+        self.header_mode = self.config.get('header_mode', "agent")
+        self.memory_flag = self.config.get('memory_flag', False)
 
+        # if True, only use semantic check for evaluation
+        self.semantic_mode = self.config.get('semantic_mode', "both")
     def _load_config(self, config_path: str) -> dict[str, Any]:
         """Load configuration from a YAML file."""
         with open(config_path, 'r') as f:

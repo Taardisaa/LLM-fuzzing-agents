@@ -1,3 +1,4 @@
+# this code is copyed from LLM4DG 
 import os
 
 class BaseChecker:
@@ -28,7 +29,10 @@ class SemanticTester(FPChecker):
 
     def add_func_decl(self, code):
         # add the api decl
-        return code.replace('extern int LLVMFuzzerTestOneInput', self.check_func_decl + '\nextern int LLVMFuzzerTestOneInput')
+        if "extern int LLVMFuzzerTestOneInput" in code:
+            return code.replace('extern int LLVMFuzzerTestOneInput', self.check_func_decl + '\nextern int LLVMFuzzerTestOneInput')
+        else:
+            return code.replace('int LLVMFuzzerTestOneInput', self.check_func_decl + '\nint LLVMFuzzerTestOneInput')
 
     def gen_test_code(self, code):
         test_code = '''
@@ -431,18 +435,24 @@ from constants import CompileResults, LanguageType
 import random
 from utils.oss_fuzz_utils import OSSFuzzUtils
 from utils.docker_utils import DockerUtils
-
+import re
 
 class SemaCheck():
-    def __init__(self, oss_fuzz_dir: Path, project_name: str, new_project_name: str, func_name: str, project_lang: LanguageType):
+    def __init__(self, oss_fuzz_dir: Path, benchmark_dir: Path, project_name: str, new_project_name: str, func_name: str, project_lang: LanguageType):
         self.oss_fuzz_dir = oss_fuzz_dir
+        self.benchmark_dir = benchmark_dir
         self.project_name = project_name
         self.new_project_name = new_project_name
         self.func_name = func_name
         self.docker_tool = DockerUtils(oss_fuzz_dir, project_name, new_project_name, project_lang)
         
     def check(self, harness_code: str,  fuzzer_path: Path, fuzzer_name: str) -> bool:
-        
+
+        # remove all comments
+        harness_code = '\n'.join([line for line in harness_code.split('\n') if not line.strip().startswith('//')])
+        # comments between /* and */
+        harness_code = re.sub(r'/\*.*?\*/', '', harness_code, flags=re.DOTALL)
+
         if self.func_name in checker_list.keys():
 
             def dotestfunc(testcase: str):
@@ -459,11 +469,11 @@ class SemaCheck():
             wrapped_code = checker.gen_test_code(harness_code)
 
             # init the compiler
-            compiler = Compiler(self.oss_fuzz_dir, self.project_name, self.new_project_name)
+            compiler = Compiler(self.oss_fuzz_dir,self.benchmark_dir, self.project_name, self.new_project_name)
             # compile the code
             compile_res, build_msg = compiler.compile(wrapped_code, fuzzer_path, fuzzer_name)
             if compile_res != CompileResults.Success:
-                print(f"Compile error: {build_msg}")
+                # print(f"Compile error: {build_msg}")
                 return False
         
             # run fuzzer driver with testcase
@@ -494,22 +504,23 @@ class SemaCheck():
 if __name__ == '__main__':
     from pathlib import Path
 
+    benchmark_root = Path("/home/yk/code/LLM-reasoning-agents/benchmark-sets/ntu/")
     oss_fuzz_dir = Path("/home/yk/code/oss-fuzz/")
-    project_name = "pupnp"
+    project_name = "gdk-pixbuf"
     random_str = ''.join(random.choices("abcdefghijklmnopqrstuvwxyz", k=16))
     new_project_name = "{}_{}".format(project_name, random_str)
     
     scr_path = oss_fuzz_dir / "projects" / project_name
     dst_path = oss_fuzz_dir / "projects" / new_project_name
 
-    oss_tool = OSSFuzzUtils(oss_fuzz_dir, project_name, new_project_name)
+    oss_tool = OSSFuzzUtils(oss_fuzz_dir, benchmark_root, project_name, new_project_name)
     project_fuzzer_name, project_harness_path  = oss_tool.get_harness_and_fuzzer()
     project_lang = oss_tool.get_project_language()
 
     shutil.copytree(scr_path, dst_path, dirs_exist_ok=True)
 
-    function_name = "ixmlLoadDocumentEx"
+    function_name = "gdk_pixbuf_new_from_file"
     # test the semantic check
-    harness_path = Path("/home/yk/code/LLM-reasoning-agents/outputs/issta1/pupnp_ijwgifzjwqxwnche/harness.txt")
-    flag = SemaCheck(oss_fuzz_dir, project_name, new_project_name, function_name, project_harness_path, project_fuzzer_name).check(harness_path.read_text())
+    harness_path = Path("/home/yk/code/LLM-reasoning-agents/outputs_ablation/gpt5-mini/code_info/agent/gdk-pixbuf/gdk_pixbuf_new_from_file/run1_cxfbgmttnyvtdfue/draft_fix0.txt")
+    flag = SemaCheck(oss_fuzz_dir, project_name, new_project_name, function_name, project_lang).check(harness_path.read_text(), project_harness_path,  project_fuzzer_name)
     print(f"Semantic check result: {flag}")

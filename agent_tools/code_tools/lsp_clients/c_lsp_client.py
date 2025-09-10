@@ -4,6 +4,8 @@ from agent_tools.code_tools.lsp_clients.clspclient_raw import ClangdLspClient
 from constants import LanguageType, LSPFunction
 from typing import Any, Optional
 from pathlib import Path
+from dataclasses import asdict
+from agent_tools.code_tools.lsp_clients.extract_functions_clang import LibclangExtractor
 
 class CLSPCLient():
     def __init__(self, workdir: str,  project_lang: LanguageType):
@@ -192,27 +194,26 @@ class CLSPCLient():
         return ret_location
 
 
-    async def request_all_functions(self) -> list[tuple[str, str, str, int, int]]:
+    async def request_all_functions(self) -> list[dict[str, Any]]:
        
-        # Find declaration
-        response = await self.get_workspace_symbols("")
 
-        API_list = []
-        for symbol in response:
-            if not symbol.get("location"):
-                continue
-            if symbol.get("kind", "") not in [12, 6, 9]:  # 12: Function, 6: Method, 9: Constructor
-                continue
-                
-            print(f"symbol: {symbol}")
-            exit()
-            name = symbol.get("name", "")
-            space = symbol.get("containerName", "")
-            location = symbol["location"]
-            file_path = location.get("uri", "").replace("file://", "")
-            line = location['range']['start']['line']
-            charpos = location['range']['start']['character']
+        # Create extractor
+        extractor = LibclangExtractor(self.project_root)
+        # Process project
+        extractor.get_all_functions(os.path.join(self.project_root, "compile_commands.json"))
+        functions_list = [asdict(func) for func in extractor.extracted_functions.values()]
+        return functions_list
+    
+    async def request_all_headers(self) -> list[dict[str, Any]]:
+        """
+        Get all header files in the project.
+        Returns:
+            list[str]: A list of header file paths.
+        """
 
-            API_list.append((name, space, file_path, line, charpos))
-            
-        return API_list
+        # Create extractor
+        extractor = LibclangExtractor(self.project_root)
+        # Process project
+        headers = extractor.get_all_headers(os.path.join(self.project_root, "compile_commands.json"))
+        
+        return [{"file_path": header} for header in headers]

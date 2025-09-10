@@ -1,5 +1,4 @@
-import re
-
+from langchain_openai import ChatOpenAI
 text = """// 165:     // Cleanup
 // 166:     free_sip_msg(msg);
 // 167:     free(body);
@@ -8,4 +7,5 @@ text = """// 165:     // Cleanup
 // 170: }"""
 
 
-print(cleaned)
+llm = ChatOpenAI(model="gpt-4.1")
+print(llm.temperature)

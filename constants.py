@@ -38,6 +38,7 @@ class LSPFunction(Enum):
     References = "references"
     StructFunctions = "struct_functions"
     AllSymbols = "all_symbols"
+    AllHeaders = "all_headers"
 
 class CompileResults(Enum):
     Success = "Complie Success"
@@ -53,6 +54,16 @@ class FuzzResult(Enum):
     ReadLogError = "Read Log Error"
     ConstantCoverageError = "Constant Coverage Error"
     LackCovError = "Lack initial coverage or the final done coverage"
+
+    
+class EvalResult(Enum):
+    NoLogError = "Log file does not exist"
+    NoHeader = "No Header Found"
+    Failed = "Failed"
+    Success = "Success"
+    NoCall = "No call"
+    Fake = "Fake Definition"
+
 
 
 class ToolDescMode(Enum):

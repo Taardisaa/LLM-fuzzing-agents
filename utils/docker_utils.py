@@ -5,7 +5,7 @@ from constants import LanguageType, DockerResults, PROJECT_PATH
 from pathlib import Path
 from typing import Union, Optional, Any
 import threading
-#  c
+
 # c++  # cpp for tree-sitter
 # go
 # rust
@@ -31,7 +31,7 @@ class DockerUtils:
     def build_image(self, build_image_cmd: list[str]) -> bool:
         '''Build the image for the project'''
         try:
-            sp.run(build_image_cmd, stdin=sp.DEVNULL, stdout=sp.DEVNULL, stderr=sp.STDOUT, check=True, timeout=600)
+            sp.run(build_image_cmd, stdin=sp.DEVNULL, stdout=sp.DEVNULL, stderr=sp.STDOUT, check=True, timeout=1200)
             # sp.run(build_image_cmd, stdin=sp.DEVNULL, stdout=None, stderr=None, check=True, timeout=600)
             return True
         except sp.CalledProcessError as e:
@@ -40,6 +40,26 @@ class DockerUtils:
             return False
         except Exception as e:
             print(f"Error building image: {e}")
+            return False
+
+    def build_fuzzers(self, build_fuzzer_cmd: list[str]) -> bool:
+
+        # run the build command
+        try:
+            # self.docker_tool.run_cmd(["find", "-name", "comp"])
+            sp.run(build_fuzzer_cmd,
+                   stdout=sp.PIPE,  # Capture standard output
+                    # Important!, build fuzzer error may not appear in stderr, so redirect stderr to stdout
+                   stderr=sp.STDOUT,  # Redirect standard error to standard output
+                   text=True,  # Get output as text (str) instead of bytes
+                   check=True) # Raise exception if build fails
+            return True
+        except sp.CalledProcessError as e:
+            return False
+        except sp.TimeoutExpired as e:
+            return False
+        except Exception as e:
+            print(f"Error building fuzzers: {e}")
             return False
 
 
@@ -66,9 +86,11 @@ class DockerUtils:
         self.run_cmd(["rm", "-rf", "/work/*"])
 
 
-    def run_cmd(self, cmd_list: Union[list[str], str], timeout:Optional[int]=None, **kargs:Any) -> str:
+    def run_cmd(self, cmd_list: Union[list[str], str], timeout:int=120, **kargs:Any) -> str:
 
-        client = docker.from_env()
+        # The client timeout should be longer than the container wait timeout
+        client = docker.from_env(timeout=timeout)
+        container = None
         try:
             container = client.containers.run( # type: ignore
                 self.image_name,
@@ -82,16 +104,24 @@ class DockerUtils:
 
             # Wait for the container to exit, with a timeout
             container.wait(timeout=timeout)  # Timeout in seconds
-
             logs = container.logs().decode('utf-8') 
-
-            container.stop()
-            container.remove()
-            
             return logs
 
         except Exception as e:
+            # This will catch the timeout from container.wait() and other exceptions
+            if container:
+                try:
+                    container.kill() # type: ignore
+                except Exception:
+                    pass # Ignore error if container is already stopping/stopped
             return f"{DockerResults.Error.value}: {e}"
+        finally:
+            # Ensure container is always removed
+            if container:
+                try:
+                    container.remove(force=True)
+                except:
+                    pass # Ignore error if container was already removed
 
     def exec_in_container(self, container_id: str, cmd: Union[list[str], str], workdir: Optional[str] = None, timeout: Optional[int] = 60) -> str:
         """
@@ -133,14 +163,18 @@ class DockerUtils:
             return f"{DockerResults.Error.value}: Command timed out after {timeout} seconds."
         return result["output"]
 
-    def start_container(self) -> str:
+    def start_container(self, timeout: int=600) -> str:
         """
         Start a Docker container from the image and return its container ID.
         If the container is already running, reuse it.
         """
         try:
-            workdir = self.run_cmd(["pwd"], timeout=None, volumes=None).strip()
-            client = docker.from_env()
+
+            workdir = self.run_cmd(["pwd"], timeout=timeout, volumes=None).strip()
+            if workdir.startswith(DockerResults.Error.value):
+                # Propagate the error from run_cmd
+                return workdir
+            client = docker.from_env(timeout=timeout)
             # You can use a unique name for the container to avoid duplicates
             container_name = f"{self.new_project_name}_retriever"
             # Check if container exists and is running

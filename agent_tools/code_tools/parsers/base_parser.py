@@ -105,9 +105,8 @@ class BaseParser:
         return "", "", 0
     
 
-    def get_file_functions(self) -> list[str]:
-        
-        ret_list: list[str] = []
+    def get_file_functions(self) -> list[tuple[str, str]]:
+        ret_list: list[tuple[str, str]] = []
         for _, query in self.func_declaration_query_dict.items():
             # Execute the query
             query = self.parser_language.query(query)
@@ -119,12 +118,17 @@ class BaseParser:
                 # if we can't decode the text, it is meaningless to search
                 if not source_node.text:
                     continue
-
+                
+                id_node = self.match_child_node(source_node, "identifier", recusive_flag=True)
+                # the function name is under function_declarator
+                if not id_node or not id_node.text: 
+                    continue
+                function_name = id_node.text.decode("utf-8", errors="ignore")
                 # Decode the source code to a string
                 src_code = source_node.text.decode("utf-8", errors="ignore")
                 # function declaration must include (
                 if src_code:
-                    ret_list.append(src_code)
+                    ret_list.append((src_code, function_name))
         
         return ret_list
 
@@ -282,7 +286,8 @@ class BaseParser:
 
         # Execute the query
         captures = function_definition_query.captures(self.tree.root_node)
-
+        if not captures:
+            return None
         # Check the nodes
         for node in captures["func_def"]:
 

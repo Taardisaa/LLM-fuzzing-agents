@@ -1,13 +1,14 @@
 import yaml
-from constants import LanguageType, PROJECT_PATH
+from constants import LanguageType
 from pathlib import Path
 from typing import Optional
 import os
 
 class OSSFuzzUtils:
-    def __init__(self, ossfuzz_dir: Path, project_name: str, new_project_name: str) -> None:
+    def __init__(self, ossfuzz_dir: Path, benchmark_dir: Path, project_name: str, new_project_name: str) -> None:
 
         self.ossfuzz_dir = ossfuzz_dir
+        self.yaml_path = benchmark_dir / "{}.yaml".format(project_name)
         self.project_name = project_name
         self.new_project_name = new_project_name
         self.language = self.get_project_language()
@@ -53,9 +54,7 @@ class OSSFuzzUtils:
     def get_harness_and_fuzzer(self) -> tuple[str, Path]:
         """Returns the harness and fuzzer file path for the project."""
 
-        benchmark_yaml = "{}/benchmark-sets/all/{}.yaml".format(PROJECT_PATH, self.project_name)
-
-        with open(benchmark_yaml, 'r') as file:
+        with open(self.yaml_path, 'r') as file:
             try:
                 data = yaml.safe_load(file)
                 return data.get("target_name"), Path(data.get("target_path"))

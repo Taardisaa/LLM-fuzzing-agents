@@ -3,7 +3,7 @@ import random
 import shutil
 from utils.oss_fuzz_utils import OSSFuzzUtils
 from utils.misc import extract_name
-from issta.semantic_check import SemaCheck
+from harness_agent.modules.semantic_check import SemaCheck
 function_harness_mapping = {
 "stun_is_binding_response":("FuzzStunClient", "/src/coturn/fuzzing/FuzzStunClient.c"),
 "stun_is_command_message":("FuzzStunClient", "/src/coturn/fuzzing/FuzzStunClient.c"),
@@ -13,7 +13,7 @@ function_harness_mapping = {
 "cil_compile": ("binpolicy-fuzzer","/src/selinux/libsepol/fuzz/binpolicy-fuzzer.c"),
 }
 
-def test_one(oss_fuzz_dir: Path, project_name: str, harness_file: Path, function_name: str):
+def test_one(oss_fuzz_dir: Path, benchmark_dir:Path, project_name: str, harness_file: Path, function_name: str):
     
     random_str = ''.join(random.choices("abcdefghijklmnopqrstuvwxyz", k=16))
     new_project_name = "{}_{}".format(project_name, random_str)
@@ -21,7 +21,7 @@ def test_one(oss_fuzz_dir: Path, project_name: str, harness_file: Path, function
     scr_path = oss_fuzz_dir / "projects" / project_name
     dst_path = oss_fuzz_dir / "projects" / new_project_name
 
-    oss_tool = OSSFuzzUtils(oss_fuzz_dir, project_name, new_project_name)
+    oss_tool = OSSFuzzUtils(oss_fuzz_dir, benchmark_dir, project_name, new_project_name)
     
     if function_name in function_harness_mapping.keys():
         project_fuzzer_name, project_harness_path = function_harness_mapping[function_name]
@@ -38,7 +38,7 @@ def test_one(oss_fuzz_dir: Path, project_name: str, harness_file: Path, function
     return res 
 
 
-def test_single(oss_fuzz_dir: Path, save_dir: Path):
+def test_single(oss_fuzz_dir: Path, benchmark_dir: Path, save_dir: Path):
     log_file = save_dir / "agent.log"
     log_content = log_file.read_text()
 
@@ -50,12 +50,12 @@ def test_single(oss_fuzz_dir: Path, save_dir: Path):
     if project_name == "libpg":
         project_name = "libpg_query"
     harness_file = save_dir / "draft_fix1.txt"
-
+   
     function_signature = (save_dir / "function.txt").read_text()
     function_name = extract_name(function_signature)
 
     try:
-        flag = test_one(oss_fuzz_dir, project_name, harness_file, function_name)
+        flag = test_one(oss_fuzz_dir, benchmark_dir, project_name, harness_file, function_name)
         return flag
     except Exception as e:
         print(e)
@@ -64,7 +64,7 @@ def test_single(oss_fuzz_dir: Path, save_dir: Path):
 def test_all():
     # 
     OSS_FUZZ_DIR = Path("/home/yk/code/oss-fuzz/")
-
+    benchmark_root = Path("/home/yk/code/LLM-reasoning-agents/benchmark-sets/ntu/")
     res_path = Path("/home/yk/code/LLM-reasoning-agents/outputs/issta_no_test_apr22/issta3")
 
     with open(res_path / "issta_res_check.txt", "w") as f:
@@ -74,7 +74,7 @@ def test_all():
             if not save_dir.is_dir():
                 continue
 
-            flag = test_single(OSS_FUZZ_DIR, save_dir)
+            flag = test_single(OSS_FUZZ_DIR, benchmark_root, save_dir)
             print(f"Log dir: {save_dir.name}, Semantic check res: {flag}", file=f)
             f.flush()
 
@@ -84,6 +84,6 @@ if __name__ == "__main__":
     # exit(0)
     oss_fuzz_dir = Path("/home/yk/code/oss-fuzz/")
     res_path = Path("/home/yk/code/LLM-reasoning-agents/outputs/issta_rest/issta1/coturn_stun_is_response_zcqniswmreqvfgix")
-
-    flag = test_single(oss_fuzz_dir, res_path)
+    benchmark_root = Path("/home/yk/code/LLM-reasoning-agents/benchmark-sets/ntu/")
+    flag = test_single(oss_fuzz_dir, benchmark_root, res_path)
     print("Semantic check res: ", flag)

@@ -1,0 +1,7 @@
+ You can call the following tools to get more information about the code:
+ - get_symbol_header: Get the header file of a symbol.  Header file must be included using the absolute path, like #include "/path/to/header.h"
+ - get_symbol_definition: Get the definition of a symbol. (Details of the symbol, like the function body)
+ - get_symbol_declaration: Get the declaration of a symbol.
+ - view_code: View the code around the given file and targe line.
+ - get_struct_related_functions: Get the functions related to a struct. This can be used to get the functions that operate on a struct, like the initialization, destruction functions.
+ - get_symbol_references: Get the references of a symbol. This can be used to get the usage of a function.

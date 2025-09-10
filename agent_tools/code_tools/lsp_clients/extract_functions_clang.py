@@ -16,17 +16,18 @@ import clang.cindex
 from clang.cindex import CursorKind, Index, TranslationUnit
 
 from clang.cindex import Index, CursorKind, Config
-# Config.set_library_file('/usr/local/lib/python3.11/site-packages/clang/native/libclang.so')  # adjust for your system
-Config.set_library_file('/usr/lib/llvm-18/lib/libclang.so') 
+Config.set_library_file('/usr/local/lib/python3.11/site-packages/clang/native/libclang.so') 
+
 @dataclass
 class FunctionInfo:
     """Simplified function information"""
     name: str
-    namespace_class: str
+    namespace: str
     file_path: str
     line_number: int
+    signature: str
 
-class LibclangFunctionExtractor:
+class LibclangExtractor:
     """Simplified C++ function extractor using libclang and compile_commands.json"""
     
     def __init__(self, project_root: str):
@@ -55,6 +56,40 @@ class LibclangFunctionExtractor:
         
         return "::".join(reversed(parts))
     
+    def _get_function_signature(self, cursor) -> str:
+        """Extract function signature including return type and parameters"""
+        try:
+            # Get the function type
+            func_type = cursor.type
+            
+            # Get return type
+            return_type = func_type.get_result().spelling if func_type.get_result() else "void"
+            
+            # Get function name
+            func_name = cursor.spelling
+            
+            # Get parameters
+            params = []
+            for arg in cursor.get_arguments():
+                param_type = arg.type.spelling if arg.type else ""
+                param_name = arg.spelling if arg.spelling else ""
+                if param_name:
+                    params.append(f"{param_type} {param_name}")
+                else:
+                    params.append(param_type)
+            
+            # Handle special cases for constructors and destructors
+            if cursor.kind == CursorKind.CONSTRUCTOR:
+                return f"{func_name}({', '.join(params)})"
+            elif cursor.kind == CursorKind.DESTRUCTOR:
+                return f"~{func_name}({', '.join(params)})"
+            else:
+                return f"{return_type} {func_name}({', '.join(params)})"
+                
+        except Exception as e:
+            # Fallback to basic signature if extraction fails
+            return f"{cursor.spelling}(...)"
+    
     def _is_project_file(self, file_path: str) -> bool:
         """Check if file is within project directory"""
         try:
@@ -82,22 +117,24 @@ class LibclangFunctionExtractor:
         if not self._is_project_file(file_path):
             return None
         
-        namespace_class = self._get_namespace_class(cursor)
+        namespace = self._get_namespace_class(cursor)
+        signature = self._get_function_signature(cursor)
         
         return FunctionInfo(
             name=cursor.spelling,
-            namespace_class=namespace_class,
+            namespace=namespace,
             file_path=file_path,
-            line_number=location.line
+            line_number=location.line,
+            signature=signature
         )
     
     def _traverse_ast(self, cursor):
         """Recursively traverse AST and extract functions"""
         func_info = self._extract_function_info(cursor)
         if func_info:
-            # Use namespace_class::name as unique key for deduplication
+            # Use namespace::name as unique key for deduplication
             # This will keep only one instance of each function signature
-            key = f"{func_info.namespace_class}::{func_info.name}" if func_info.namespace_class else func_info.name
+            key = f"{func_info.namespace}::{func_info.name}" if func_info.namespace else func_info.name
             
             # Only add if not already present (keeps the first occurrence)
             if key not in self.extracted_functions:
@@ -105,11 +142,11 @@ class LibclangFunctionExtractor:
         
         for child in cursor.get_children():
             self._traverse_ast(child)
-    
-    def analyze_file(self, directory: str, src_file: str, args: List[str]):
+
+    def analyze_file(self, directory: str, src_file: str, args: List[str], header_flag: bool=False):
         """Analyze a single file from compile_commands.json"""
         file_path = os.path.join(directory, src_file) if not os.path.isabs(src_file) else src_file
-        
+        file_path = os.path.normpath(file_path)  # Normalize path
         if not os.path.exists(file_path):
             return
         
@@ -120,6 +157,7 @@ class LibclangFunctionExtractor:
                 # Make relative path absolute, handling ../ sequences properly
                 path = os.path.normpath(os.path.join(directory, path))
                 path = os.path.abspath(path)
+            
             return path
         
         # Convert relative include paths to absolute paths
@@ -142,25 +180,16 @@ class LibclangFunctionExtractor:
         
         # Add additional system include directories
         enhanced_args += [
-            "-x", "c++",
-            "-I/usr/local/include/x86_64-unknown-linux-gnu/c++/v1",
-            "-I/usr/local/include/c++/v1",
-            "-I/usr/local/lib/clang/18/include",
-            "-I/usr/local/include",
-            "-I/usr/include/x86_64-linux-gnu",
-            "-I/usr/include",
+        #     "-x", "c++",
+        #     "-I/usr/local/include/x86_64-unknown-linux-gnu/c++/v1",
+        #     "-I/usr/local/include/c++/v1",
+        #     "-I/usr/local/lib/clang/18/include",
+        #     "-I/usr/local/include",
+        #     "-I/usr/include/x86_64-linux-gnu",
+        #     "-I/usr/include",
              "-resource-dir=/usr/local/lib/clang/18",  # explicitly tell clang resource dir
         ]
-        # project_include_dirs = [
-        #     str(self.project_root / "include"),
-        #     str(self.project_root / "src"),
-        #     str(self.project_root)
-        # ]
-        
-        # for include_dir in project_include_dirs:
-        #     if os.path.exists(include_dir):
-        #         enhanced_args.extend(["-I", include_dir])
-        
+
         # Parse with compile_commands.json arguments
         translation_unit = self.index.parse(
             file_path,
@@ -168,6 +197,18 @@ class LibclangFunctionExtractor:
             options=TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD
         )
         
+        if header_flag:
+            user_headers: set[str] = set()
+            for inclusion in translation_unit.get_includes():
+                 
+                header_path = inclusion.include.name
+                if header_path.startswith("/usr"):
+                    continue  # System header
+                else:
+                    header_path = os.path.normpath(header_path)
+                    user_headers.add(header_path)
+            return user_headers
+
         if translation_unit:
             # Check for diagnostics (errors/warnings)
             diagnostics = list(translation_unit.diagnostics)
@@ -234,7 +275,7 @@ class LibclangFunctionExtractor:
         
         return compile_db
 
-    def process_project(self, compile_db_path: str):
+    def get_all_functions(self, compile_db_path: str):
         """Process all files from compile_commands.json"""
         compile_db = self.load_compile_commands(compile_db_path)
         
@@ -243,6 +284,18 @@ class LibclangFunctionExtractor:
             self.analyze_file(directory, src_file, args)
     
     
+    def get_all_headers(self, compile_db_path: str) -> Set[str]:
+        """Get all header files from compile_commands.json"""
+        compile_db = self.load_compile_commands(compile_db_path)
+        headers: Set[str] = set()
+        
+        for src_file in compile_db:
+            directory, args = compile_db[src_file]
+            headers.update(self.analyze_file(directory, src_file, args, header_flag=True))
+
+        return headers
+
+        return headers
     def export_to_json(self, output_path: str):
         """Export functions to JSON"""
         functions_list = [asdict(func) for func in self.extracted_functions.values()]
@@ -257,8 +310,8 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Extract C++ functions using compile_commands.json')
-    parser.add_argument('-p','--project-root', help='Project root directory', default='/src/ada-url')
-    parser.add_argument('-c', '--compile-commands', default='/src/ada-url/compile_commands.json',
+    parser.add_argument('-p','--project-root', help='Project root directory', default='/src/gpac')
+    parser.add_argument('-c', '--compile-commands', default='/src/gpac/compile_commands.json',
                        help='Path to compile_commands.json')
     parser.add_argument('-o', '--output', default='functions.json',
                        help='Output JSON file')
@@ -266,12 +319,12 @@ def main():
     args = parser.parse_args()
     
     # Create extractor
-    extractor = LibclangFunctionExtractor(args.project_root)
+    extractor = LibclangExtractor(args.project_root)
     # Process project
-    extractor.process_project(args.compile_commands)
+    headers = extractor.get_all_headers(args.compile_commands)
     
     # Export results
-    extractor.export_to_json(args.output)
-
+    # extractor.export_to_json(args.output)
+    print(f"Found {len(headers)} header files:")
 if __name__ == '__main__':
     main()

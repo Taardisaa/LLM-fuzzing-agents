@@ -2,33 +2,111 @@ from langchain_openai import ChatOpenAI
 from constants import PROJECT_PATH
 from pathlib import Path
 from pydantic import BaseModel, Field
+import json
+from typing import Any, Union
+import tiktoken
+import os
 
 class AnswerStruct(BaseModel):
-    """Split the response into the answer and the explaintion."""
-    answer: str = Field(description="The answer to the question.")
+    """Split the response into the answer and the explanation."""
+    answer: Union[str, bool] = Field(description="The answer to the question. Can be 'true'/'false' or a boolean.")
     explaination: str = Field(description="The explanation for the answer.")
 
 
 class LLMSelector:
     def __init__(self, model_name: str):
         self.name = "LLM"
-        self.structured_llm = ChatOpenAI(model=model_name, temperature=0.).with_structured_output(AnswerStruct) # type: ignore
+        if model_name.startswith("gpt"):
+            llm = ChatOpenAI(model=model_name)
+        elif model_name.startswith("anthropic"):
+            llm = ChatOpenAI(
+                model=model_name.split("/")[1].replace(".", "-"), # type: ignore
+                temperature=0,
+                api_key=os.getenv("ANTHROPIC_API_KEY", ""), # type: ignore
+                base_url="https://dfirdev.voidness.work"
+                ) # type: ignore
+        else:
+            llm = ChatOpenAI(
+                api_key=os.getenv("OPENROUTER_API_KEY", ""), # type: ignore
+                base_url="https://openrouter.ai/api/v1",
+                model=model_name,
+                temperature=0.)
+
+        self.llm = llm
+        self.structured_llm = llm.with_structured_output(AnswerStruct) # type: ignore
         prompt_path = Path(f"{PROJECT_PATH}/prompts/example_selection.txt")
         self.prompt_template = prompt_path.read_text()
 
 
     def score_example(self, target_function: str, code: str) -> int:
-
         prompt = self.prompt_template.replace("{target_function}", target_function).replace("{code}", code)
-        resp = self.structured_llm.invoke(prompt) # type: ignore
-        # print(f"target function: {target_function}, code: {code}")
-        # print(f"answer: {resp.answer}, explaination: {resp.explaination}")
-        # time.sleep(1)
+
+        try:
+            resp = self.structured_llm.invoke(prompt) # type: ignore
        
-        if resp.answer.lower() == "true": # type: ignore
-            return 1
-        else:
-            return 0
+            # Handle both string and boolean responses
+            if isinstance(resp.answer, bool): # type: ignore
+                return 1 if resp.answer else 0 # type: ignore
+            elif isinstance(resp.answer, str) and resp.answer.lower() == "true": # type: ignore
+                return 1
+            else:
+                return 0
+
+        except Exception as e:
+            # try with no structured output
+            print(f"Error invoking LLM: {e}")
+            resp = self.llm.invoke(prompt)
+
+            # Extract the answer from the raw text response
+            answer_text = resp.content.strip().lower() # type: ignore
+            if "true" in answer_text:
+                return 1
+            else:
+                return 0
+        
+
+def cache_example_selection(json_file: Path, function_name:str, project_name:str,   llm_name: str = "gpt-4.1") -> list[dict[str, Any]]:
+    """Cache the example selection results."""
+    # 
+    llm_norm = llm_name.replace("/", "_")
+    save_json_file = json_file.with_name(json_file.name.replace(".json", f"_{llm_norm}.json"))
+    if not json_file.exists():
+        raise FileNotFoundError(f"File {json_file} does not exist.")
+
+    if save_json_file.exists():
+        # read json file 
+        with open(save_json_file, 'r') as f:
+            data = f.read()
+            return json.loads(data)
+
+    # Read the JSON file
+    with open(json_file, 'r') as f:
+        data = f.read()
+        json_data = json.loads(data)
+    # add new key-value pair to indicate the example 
+    llm_selector = LLMSelector(llm_name)
+    # a roughly 1000 tokens limit for the source code
+    enc = tiktoken.encoding_for_model("gpt-4o")
+    res_list:list[dict[str, Any]] = []            
+    for example_json in json_data:
+        
+        source_code = example_json["source_code"]
+        if len(enc.encode(source_code)) > 1000:
+            res_list.append(example_json)
+            continue
+
+        example_json["selection_method"] = llm_selector.name
+        example_json["selection_score"] = llm_selector.score_example(
+            function_name,
+            example_json["source_code"]
+        )
+        res_list.append(example_json)
+    
+    # Write the modified JSON data back to the file
+    with open(save_json_file, 'w') as f:
+        json.dump(res_list, f, indent=4)
+
+    return res_list
 
 if __name__ == "__main__":
     llm = LLMSelector("gpt-4-0613")

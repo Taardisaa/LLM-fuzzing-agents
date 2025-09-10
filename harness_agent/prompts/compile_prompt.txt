@@ -1,0 +1,16 @@
+```
+{harness_code}
+```
+
+The above {project_lang} code has compilation error.
+
+
+The error description is: 
+{error_msg}
+
+
+Based on the above information, fix the code. 
+Your code must be compilable and runnable. 
+Do not change the function signature of the harness function.
+
+Must provide the full fixed code. 

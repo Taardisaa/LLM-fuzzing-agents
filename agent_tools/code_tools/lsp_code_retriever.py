@@ -54,6 +54,11 @@ class LSPCodeRetriever():
             # the namespace matching in the parser sometimes will fail, so we just use the symbol name directly
             query_key, source_code, start_line = parser.get_symbol_source(symbol_name, lineno, lsp_function)
 
+        # template header file, return empty
+        file_text  = Path(file_path).read_text(encoding="utf-8")
+        if source_code == "" and self.symbol_name not in file_text:
+            # if the source code is not found, we will return the full line of the file
+            return []
         return [{"source_code": source_code, "file_path": file_path, "line": lineno, "type": query_key, "start_line": start_line}]
 
     def fectch_code_from_response(self, response: list[dict[str, Any]], lsp_function: LSPFunction) -> list[dict[str, Any]]:
@@ -129,13 +134,26 @@ class LSPCodeRetriever():
 
         return LSPResults.Success.value, response
 
-    async def get_all_functions(self) -> tuple[str, list[tuple[str, int, int]]]:
+    async def get_all_functions(self) -> tuple[str, list[dict[str, Any]]]:
         
         # Find declaration
         response = await self.lsp_client.request_all_functions()
 
         if not response:
             return f"{LSPResults.Error.value}, Empty Response.", []
+
+        return LSPResults.Success.value, response
+    
+    async def get_all_headers(self) -> tuple[str, list[dict[str, Any]]]:
+        """
+        Get all header files in the project.
+        Returns:
+            tuple[str, list[dict[str, Any]]]: A tuple containing a message and a list of header file paths.
+        """
+        response = await self.lsp_client.request_all_headers()
+
+        if not response:
+            return f"{LSPResults.Error.value}, Empty Response.", [{}]
 
         return LSPResults.Success.value, response
 
@@ -185,7 +203,7 @@ class LSPCodeRetriever():
 async def main():
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('--workdir', type=str, default="/src/", help='The work place that can run bear compile.')
-    parser.add_argument('--lsp-function', type=str, default="all_symbols", choices=[e.value for e in LSPFunction], help='The LSP function name')
+    parser.add_argument('--lsp-function', type=str, default="all_headers", choices=[e.value for e in LSPFunction], help='The LSP function name')
     parser.add_argument('--symbol-name', type=str, default="", help='The function name or struct name.')
     parser.add_argument('--lang', type=str, default="C", choices=[e.value for e in LanguageType], help='The project language.')
     args = parser.parse_args()
@@ -195,6 +213,8 @@ async def main():
    
     if args.lsp_function == LSPFunction.AllSymbols.value:
         msg, res = await lsp.get_all_functions()
+    elif args.lsp_function == LSPFunction.AllHeaders.value:
+        msg, res = await lsp.get_all_headers()
     else:
         msg, res = await lsp.get_symbol_info()
 

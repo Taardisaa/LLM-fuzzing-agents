@@ -8,6 +8,7 @@ import json
 import yaml
 import os
 import re
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -60,23 +61,33 @@ def query_introspector(api: str, params: dict) -> Optional[requests.Response]:
 
 
 
-def build_ntu_bench(jsonl_path: str) -> None:
+def build_ntu_bench(bench_dir: str) -> None:
 	INTROSPECTOR_ENDPOINT = 'https://introspector.oss-fuzz.com/api'
 	INTROSPECTOR_FUNC_SIG = f'{INTROSPECTOR_ENDPOINT}/function-signature'
 
+	bench_path = Path(bench_dir)
+	function_list: dict[str, list[str]] = {}
 
-	function_list = {}
-    # open jsonl file
-	with open(jsonl_path, 'r') as f:
-		# json.load(f)
-		for project in json.load(f):
+	for project_path in bench_path.iterdir():
+
+		# if project_path.stem != "gpac":
+			# continue
+
+		if not project_path.is_file():
+			continue
+		if not project_path.suffix == '.yaml':
+			continue
+
+		# open yaml file
+		with open(project_path, 'r') as f:
+			# yaml.safe_load(f)
+			project_data = yaml.safe_load(f)
 			# project = json.loads(line)
-			project_name = project['Project']
+			project_name = project_data['project']
 
-			function = project['API']
-			if project_name not in function_list:
-				function_list[project_name] = []
-			function_list[project_name].append((function))
+			function_list[project_name] = []
+			for function_info in project_data['functions']:
+				function_list[project_name].append(function_info["name"])
 
     # "functions":
     # - "name": "_ZZN4absl19str_format_internal12_GLOBAL__N_124FractionalDigitGenerator13RunConversionENS_7uint128EiNS_11FunctionRefIFvS2_EEEENKUlNS_4SpanIjEEE_clES8_"
@@ -92,11 +103,13 @@ def build_ntu_bench(jsonl_path: str) -> None:
 
 	for project_name in function_list.keys():
 		
-		if project_name == "spdk":
-			print(f"Skipping {project_name}, number of functions: {len(function_list[project_name])}")
-			continue
+		# if project_name == "spdk":
+			# print(f"Skipping {project_name}, number of functions: {len(function_list[project_name])}")
+			# continue
+
+
 		# create a yaml file for each
-		project_yaml = {"functions": [], 
+		project_yaml: dict[str, Any] = {"functions": [],
 						"project": project_name}
 
 		# oss benchmark yaml path
@@ -130,25 +143,24 @@ def build_ntu_bench(jsonl_path: str) -> None:
 				project_yaml['target_name'] = oss_fuzz_gen['target_name']
 
 		for function in function_list[project_name]:
-			
-			params = {
-			'project': project_name,
-			'function': function
-			}
 
-			
-			response = query_introspector(INTROSPECTOR_FUNC_SIG, params)
+			query_params = {
+				'project': project_name,
+				'function': function
+			}
+	
+			response = query_introspector(INTROSPECTOR_FUNC_SIG, query_params)
 
 			if response is None:
 				print(f"Failed to get function signature for {function}")
 				continue
 				
 			func_data = json.loads(response.text)
-			if func_data["result"] != "success":
+			if func_data["result"] != "success" or not func_data["raw_data"]:
 				print(f"Project name:{project_name}, Failed to get function signature for {function}")
 				continue
 
-			params = []
+			params: list[dict[str, str]] = []
 			for function_type_list in func_data["raw_data"]["func_signature_elems"]["params"]:
 				params.append(
 					{
@@ -170,6 +182,6 @@ def build_ntu_bench(jsonl_path: str) -> None:
 
 		# write to yaml file
 		with open(f'/home/yk/code/fuzz-introspector/scripts/oss-fuzz-gen-e2e/workdir/oss-fuzz-gen/benchmark-sets/ntu/{project_name}.yaml', 'w') as f:
-			yaml.dump(project_yaml, f, default_flow_style=False)  
+			yaml.dump(project_yaml, f, default_flow_style=False, width=float("inf"), allow_unicode=True)  
 
-build_ntu_bench("/home/yk/code/LLM-reasoning-agents/agents/NTUBench.json")
+build_ntu_bench("/home/yk/code/LLM-reasoning-agents/benchmark-sets/ntu")

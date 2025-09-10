@@ -9,26 +9,7 @@ from agent_tools.code_tools.parsers.java_parser import JavaParser
 from constants import LanguageType, LSPFunction, LSPResults
 from pathlib import Path
 from typing import Any
-
-
-def extract_name(function_signature: str)-> str:
-    # Remove the parameters by splitting at the first '('
-    function_name = function_signature.split('(')[0]
-    # Split the function signature into tokens to isolate the function name
-    tokens = function_name.strip().split()
-    assert len(tokens) > 0
-
-    # The function name is the last token, this may include namespaces ::
-    function_name = tokens[-1]
-
-    # split the function name by ::
-    function_name = function_name.split("::")[-1]
-
-    # remove * from the function name
-    if "*" in function_name:
-        function_name = function_name.replace("*", "")
-
-    return function_name
+from agent_tools.code_tools.parsers.extract_function_parser import HeaderFunctionExtractor
 
 
 class ParserCodeRetriever():
@@ -165,7 +146,7 @@ class ParserCodeRetriever():
         
         return LSPResults.Success.value, final_resp
     
-    def get_file_fucntions(self, file_path: str) -> tuple[str, list[dict[str, Any]]]:
+    def get_file_functions(self, file_path: str) -> tuple[str, list[dict[str, Any]]]:
 
         # 
         path_list: list[Path] =  []
@@ -195,22 +176,19 @@ class ParserCodeRetriever():
             
         # for path in path_list:
         # extract all functions from the given file
-        
-        res_list: list[str] = []
+
+        res_list: list[tuple[str, str]] = []
         for _path in path_list:
             parser = self.lang_parser(Path(_path), source_code=None, project_lang=self.project_lang)
             res_list += parser.get_file_functions() # type: ignore
 
         ret_list: list[dict[str, Any]] = []
          # if the lsp function is related functions, we need to sort the results according to the time it appears in the file
-        for src in res_list:
+        for src, function_name in res_list:
 
             res_json: dict[str, Any] = {}
             res_json["source_code"] = src
-
-            # extract the function name from the source code
-            function_name = extract_name(src)
-
+            res_json["function_name"] = function_name
             # count the number of times the function name appears in the source code
             include_str = ""
             for extin in ["c", "cpp", "cc", "h", "hpp", "hxx", "java"]:
@@ -242,18 +220,44 @@ class ParserCodeRetriever():
             tuple: A tuple containing a message and a list of dictionaries with symbol information.
         """
         if self.lsp_function == LSPFunction.StructFunctions:
-            return self.get_file_fucntions(self.symbol_name)
+            return self.get_file_functions(self.symbol_name)
+        elif self.lsp_function == LSPFunction.AllSymbols:
+            function_list = self.get_all_functions()
+            if function_list:
+                return LSPResults.Success.value, function_list
+            else:
+                return LSPResults.Error.value, []
         else:
             msg, res_list =  self.get_symbol_info_helper()
             return msg, res_list
 
+    def get_all_functions(self) -> list[dict[str, Any]]:
+
+        try:
+            function_list: list[dict[str, Any]] = []
+            # only for C/C++
+            extractor = HeaderFunctionExtractor(project_root=self.project_root, language=self.project_lang)
+            # Extract all functions
+            all_functions = extractor.extract_all_functions()
+            
+            # Deduplicate
+            unique_functions = extractor.deduplicate_functions(all_functions)
+            # Convert to list of dictionaries    
+            for func in unique_functions.values():
+                function_list.append(func.to_dict())
+            return function_list
+            
+        except Exception as e:
+            print(f"Error extracting functions: {e}")
+            return []
+
     
 def main():
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('--workdir', type=str, default="/src/bloaty", help='The search directory.')
+    parser.add_argument('--workdir', type=str, default="/src/igraph", help='The search directory.')
     parser.add_argument('--lsp-function', type=str, choices=[e.value for e in LSPFunction], default="declaration", help='The LSP function name')
-    parser.add_argument('--symbol-name', type=str, default="google::protobuf::Message::InternalSerializeWithCachedSizesToArray" ,help='The function name or struct name.')
-    parser.add_argument('--lang', type=str, choices=[e.value for e in LanguageType], default="CPP" ,help='The project language.')
+    parser.add_argument('--symbol-name', type=str, default="" ,help='The function name or struct name.')
+    parser.add_argument('--lang', type=str, choices=[e.value for e in LanguageType], default="C" ,help='The project language.')
     args = parser.parse_args()
     
 
@@ -264,9 +268,7 @@ def main():
         msg = f"{LSPResults.Error}: {e}"
         res = []
 
-    print(f"Message: {msg}")
-    print(f"Response: {res}")
-    
+    print(f"res: {len(res)} results found")
     if args.lsp_function == LSPFunction.StructFunctions.value:
         file_name = f"{Path(lsp.symbol_name).stem}_struct_functions_parser.json"
     else:

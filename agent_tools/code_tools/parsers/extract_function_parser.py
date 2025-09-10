@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """
-使用 tree-sitter 从项目头文件中提取所有函数声明并去重
+Extract all function declarations from project header files using tree-sitter and deduplicate them
 """
 
-import os
-import glob
+import json
 from pathlib import Path
-from typing import Set, List, Dict, Optional
-from tree_sitter import Language, Parser, Node, Query
+from typing import Any, List, Dict, Optional
+from tree_sitter import Language, Parser
 import tree_sitter_c  # For C language
 import tree_sitter_cpp  # For C++ language
 from constants import LanguageType
 
 class FunctionDeclaration:
-    """函数声明信息"""
+    """Function declaration information"""
     def __init__(self, name: str, signature: str, file_path: str, line_number: int, 
                  function_type: str = "function", namespace: str = ""):
         self.name = name
@@ -23,6 +22,16 @@ class FunctionDeclaration:
         self.function_type = function_type
         self.namespace = namespace
         self.full_name = f"{namespace}::{name}" if namespace else name
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert function declaration to dictionary for JSON serialization"""
+        return {
+            "name": self.name,
+            "signature": self.signature,
+            "file_path": self.file_path,
+            "line_number": self.line_number,
+            "namespace": self.namespace
+        }
     
     def __str__(self):
         return f"{self.full_name}: {self.signature} ({self.file_path}:{self.line_number})"
@@ -39,16 +48,17 @@ class FunctionDeclaration:
         return hash((self.full_name, self.signature))
 
 class HeaderFunctionExtractor:
-    """头文件函数声明提取器"""
+    """Header file function declaration extractor"""
     
-    def __init__(self, project_root: str = "/src/ada-url"):
+    def __init__(self, project_root: str = "/src/ada-url", language: Optional[LanguageType] = LanguageType.C):
         self.project_root = Path(project_root)
+        self.target_language = language  # If specified, only process files of this language
         self.parser_language_mapping = {
             LanguageType.C: tree_sitter_c.language(),
             LanguageType.CPP: tree_sitter_cpp.language(),
         }
         
-        # Tree-sitter 查询语句用于提取函数声明
+        # Tree-sitter query statements for extracting function declarations
         self.function_queries = {
             "function_declaration": """
                 (function_declarator
@@ -116,7 +126,7 @@ class HeaderFunctionExtractor:
             """
         }
         
-        # 简化的查询语句
+        # Simplified query statements
         self.simple_queries = {
             "all_functions": """
                 [
@@ -144,104 +154,90 @@ class HeaderFunctionExtractor:
             """
         }
     
-    def get_language(self, file_path: Path) -> Optional[LanguageType]:
-        """根据文件扩展名确定语言类型"""
-        suffix = file_path.suffix.lower()
-        if suffix in ['.h', '.c']:
-            return LanguageType.C
-        elif suffix in ['.hpp', '.hh', '.hxx', '.cpp', '.cc', '.cxx']:
-            return LanguageType.CPP
-        return None
-    
     def find_header_files(self) -> List[Path]:
-        """查找所有头文件"""
+        """Find all header files"""
         header_files = []
+        # Include all supported file types if no specific language is specified
+        patterns = ["**/*.h", "**/*.hpp", "**/*.hh", "**/*.hxx", "**/*.c", "**/*.cpp", "**/*.cc", "**/*.cxx"]
         
-        # 查找 include 目录下的头文件
+        # Find header files in include directory
         include_dir = self.project_root / "include"
         if include_dir.exists():
-            for pattern in ["**/*.h", "**/*.hpp", "**/*.hh", "**/*.hxx"]:
+            for pattern in patterns:
                 header_files.extend(include_dir.glob(pattern))
         
-        # 查找 src 目录下的头文件
+        # Find header files in src directory
         src_dir = self.project_root / "src"
         if src_dir.exists():
-            for pattern in ["**/*.h", "**/*.hpp", "**/*.hh", "**/*.hxx"]:
+            for pattern in patterns:
                 header_files.extend(src_dir.glob(pattern))
         
         return sorted(list(set(header_files)))
     
     def extract_functions_from_file(self, file_path: Path) -> List[FunctionDeclaration]:
-        """从单个文件中提取函数声明"""
-        language_type = self.get_language(file_path)
-        if not language_type:
-            return []
+        """Extract function declarations from a single file"""
         
-        try:
-            # 读取文件内容
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                source_code = f.read()
-            
-            # 设置解析器
-            language = Language(self.parser_language_mapping[language_type])
-            parser = Parser(language)
-            
-            # 解析代码
-            tree = parser.parse(bytes(source_code, 'utf-8'))
-            
-            functions = []
-            
-            # 使用简化的查询提取函数
-            query_text = self.simple_queries["all_functions"]
-            query = language.query(query_text)
-            
-            captures = query.captures(tree.root_node)
-            
-            # 检查是否有 captures
-            if not captures:
-                return functions
-                
-            # 从 captures 中提取函数名
-            for capture_name, nodes in captures.items():
-                if capture_name == "function_name":
-                    for node in nodes:
-                        function_name = node.text.decode('utf-8')
-                        
-                        # 获取参数列表
-                        params_node = None
-                        for sibling in node.parent.children:
-                            if sibling.type == "parameter_list":
-                                params_node = sibling
-                                break
-                        
-                        if params_node:
-                            params_text = params_node.text.decode('utf-8')
-                            signature = f"{function_name}{params_text}"
-                        else:
-                            signature = function_name
-                        
-                        # 获取行号
-                        line_number = node.start_point[0] + 1
-                        
-                        # 创建函数声明对象
-                        func_decl = FunctionDeclaration(
-                            name=function_name,
-                            signature=signature,
-                            file_path=str(file_path),
-                            line_number=line_number,
-                            function_type="function"
-                        )
-                        
-                        functions.append(func_decl)
-            
+        # Read file content
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            source_code = f.read()
+        
+        # Setup parser
+        language = Language(self.parser_language_mapping[self.target_language])
+        parser = Parser(language)
+        
+        # Parse code
+        tree = parser.parse(bytes(source_code, 'utf-8'))
+        
+        functions = []
+        
+        # Use simplified query to extract functions
+        query_text = self.simple_queries["all_functions"]
+        query = language.query(query_text)
+        
+        captures = query.captures(tree.root_node)
+        
+        # Check if there are captures
+        if not captures:
             return functions
             
-        except Exception as e:
-            print(f"Error processing file {file_path}: {e}")
-            return []
+        # Extract function names from captures
+        for capture_name, nodes in captures.items():
+            if capture_name == "function_name":
+                for node in nodes:
+                    function_name = node.text.decode('utf-8')
+                    
+                    # Get parameter list
+                    params_node = None
+                    for sibling in node.parent.children:
+                        if sibling.type == "parameter_list":
+                            params_node = sibling
+                            break
+                    
+                    if params_node:
+                        params_text = params_node.text.decode('utf-8')
+                        signature = f"{function_name}{params_text}"
+                    else:
+                        signature = function_name
+                    
+                    # Get line number
+                    line_number = node.start_point[0] + 1
+                    
+                    # Create function declaration object
+                    func_decl = FunctionDeclaration(
+                        name=function_name,
+                        signature=signature,
+                        file_path=str(file_path),
+                        line_number=line_number,
+                        function_type="function"
+                    )
+                    
+                    functions.append(func_decl)
+        
+        return functions
+            
     
     def extract_all_functions(self) -> Dict[str, List[FunctionDeclaration]]:
-        """提取所有头文件中的函数声明"""
+        """Extract function declarations from all header files"""
         header_files = self.find_header_files()
         print(f"Found {len(header_files)} header files")
         
@@ -256,7 +252,7 @@ class HeaderFunctionExtractor:
         return all_functions
     
     def deduplicate_functions(self, all_functions: Dict[str, List[FunctionDeclaration]]) -> Dict[str, FunctionDeclaration]:
-        """对函数进行去重"""
+        """Deduplicate functions"""
         unique_functions = {}
         
         for file_path, functions in all_functions.items():
@@ -265,78 +261,79 @@ class HeaderFunctionExtractor:
                 if key not in unique_functions:
                     unique_functions[key] = func
                 else:
-                    # 如果已存在，保留更完整的签名
+                    # If already exists, keep the one with more complete signature
                     existing = unique_functions[key]
                     if len(func.signature) > len(existing.signature):
                         unique_functions[key] = func
         
         return unique_functions
     
-    def generate_report(self, unique_functions: Dict[str, FunctionDeclaration]) -> str:
-        """生成函数列表报告"""
-        report_lines = []
-        report_lines.append("# 函数声明提取报告")
-        report_lines.append(f"## 总计找到 {len(unique_functions)} 个唯一函数")
-        report_lines.append("")
-        
-        # 按文件分组
-        functions_by_file = {}
-        for func in unique_functions.values():
-            file_path = func.file_path
-            if file_path not in functions_by_file:
-                functions_by_file[file_path] = []
-            functions_by_file[file_path].append(func)
-        
-        # 按文件输出
-        for file_path in sorted(functions_by_file.keys()):
-            rel_path = os.path.relpath(file_path, self.project_root)
-            report_lines.append(f"### {rel_path}")
-            report_lines.append("")
-            
-            functions = sorted(functions_by_file[file_path], key=lambda f: f.line_number)
-            for func in functions:
-                report_lines.append(f"- **{func.name}** (line {func.line_number})")
-                report_lines.append(f"  - 签名: `{func.signature}`")
-                report_lines.append("")
-        
-        # 按字母顺序列出所有函数名
-        report_lines.append("## 所有函数名列表（按字母顺序）")
-        report_lines.append("")
-        for func_name in sorted(unique_functions.keys()):
-            report_lines.append(f"- {func_name}")
-        
-        return "\n".join(report_lines)
+    def save_as_json(self, unique_functions: Dict[str, FunctionDeclaration], output_file: Path) -> None:
+        """Save function data as JSON"""
 
+        # Convert functions to list of dictionaries
+        function_list = []
+        for func in unique_functions.values():
+            function_list.append(func.to_dict())
+
+        # Sort functions by name for consistent output
+        function_list.sort(key=lambda x: x["name"])
+
+        # Save to JSON file
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(function_list, f, indent=2, ensure_ascii=False)
+        
 
 def main():
-    """主函数"""
-    print("开始提取函数声明...")
+    """Main function"""
+    import argparse
     
-    # 创建提取器
-    extractor = HeaderFunctionExtractor()
+    # Setup argument parser
+    parser = argparse.ArgumentParser(description="Extract function declarations from header files")
+    parser.add_argument("--project-root", default="/src/igraph", 
+                       help="Root directory of the project (default: /src/igraph)")
+    parser.add_argument("--language", choices=["c", "cpp"], default="c",
+                       help="Target language (c or cpp). If not specified, all supported languages will be processed")
+    parser.add_argument("--output", default="function_declarations.json",
+                       help="Output JSON file name (default: function_declarations.json)")
     
-    # 提取所有函数
+    args = parser.parse_args()
+    
+    # Convert language argument to LanguageType
+    target_language = None
+    if args.language:
+        if args.language == "c":
+            target_language = LanguageType.C
+        elif args.language == "cpp":
+            target_language = LanguageType.CPP
+    
+    print("Starting function declaration extraction...")
+    if target_language:
+        print(f"Target language: {args.language}")
+    else:
+        print("Processing all supported languages (C and C++)")
+    
+    # Create extractor
+    extractor = HeaderFunctionExtractor(project_root=args.project_root, language=target_language)
+
+    # Extract all functions
     all_functions = extractor.extract_all_functions()
     
-    # 去重
+    # Deduplicate
     unique_functions = extractor.deduplicate_functions(all_functions)
     
-    # 生成报告
-    report = extractor.generate_report(unique_functions)
+    # Save as JSON
+    output_file = Path(args.project_root) / args.output
+    extractor.save_as_json(unique_functions, output_file)
     
-    # 保存报告
-    report_file = Path("/src/ada-url/function_declarations_report.md")
-    with open(report_file, 'w', encoding='utf-8') as f:
-        f.write(report)
+    print(f"Extraction complete! Found {len(unique_functions)} unique functions")
+    print(f"Data saved to: {output_file}")
     
-    print(f"提取完成！找到 {len(unique_functions)} 个唯一函数")
-    print(f"报告已保存到: {report_file}")
-    
-    # 打印统计信息
-    print("\n统计信息:")
-    print(f"- 总文件数: {len(all_functions)}")
-    print(f"- 总函数数: {sum(len(funcs) for funcs in all_functions.values())}")
-    print(f"- 唯一函数数: {len(unique_functions)}")
+    # Print statistics
+    print("\nStatistics:")
+    print(f"- Total files: {len(all_functions)}")
+    print(f"- Total functions: {sum(len(funcs) for funcs in all_functions.values())}")
+    print(f"- Unique functions: {len(unique_functions)}")
 
 
 if __name__ == "__main__":

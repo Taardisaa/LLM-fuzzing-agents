@@ -13,12 +13,13 @@ from typing import Optional
 
 class CovCollector():
 
-    def __init__(self, oss_fuzz_dir: Path,   project_name: str, new_project_name: str,
+    def __init__(self, oss_fuzz_dir: Path, benchmark_dir: Path, project_name: str, new_project_name: str,
                   project_lang: LanguageType, logger:Optional[logging.Logger]) -> None:
         
         self.logger = logger
         
         self.oss_fuzz_dir = oss_fuzz_dir
+        self.benchmark_dir = benchmark_dir
         self.project_name = project_name
         self.new_project_name = new_project_name      
         self.project_lang = project_lang
@@ -37,7 +38,7 @@ class CovCollector():
         
     def gen_wrapped_code(self, harness_code: str, function_name: str) -> str:
         # add the wrapper code to the harness code
-        wrap_file = Path(f"{PROJECT_PATH}/tools/fuzz_tools/{COV_WRAP_FILE_NAME}_{self.project_lang.value.lower()}.txt")
+        wrap_file = Path(f"{PROJECT_PATH}/agent_tools/fuzz_tools/{COV_WRAP_FILE_NAME}_{self.project_lang.value.lower()}.txt")
         if not wrap_file.exists():
             print(f"Wrapper file {wrap_file} does not exist")
             return harness_code
@@ -82,7 +83,7 @@ class CovCollector():
             raise Exception(f"Language {self.project_lang} not supported for now")
 
         # init the compiler
-        compiler = Compiler(self.oss_fuzz_dir, self.project_name, self.new_project_name)
+        compiler = Compiler(self.oss_fuzz_dir, self.benchmark_dir,self.project_name, self.new_project_name)
         # compile the code
         compile_res, build_msg = compiler.compile(wrapped_code, harness_path, fuzzer_name)
         if compile_res != CompileResults.Success:
@@ -122,8 +123,8 @@ class CovCollector():
         local_out =  Path(self.oss_fuzz_dir) / "build" / "out" / self.new_project_name
 
         # copy the cov_c.py to the out directory
-        shutil.copy(Path(PROJECT_PATH) / "tools" / "fuzz_tools" / "cov_c.py", local_out / "cov_c.py")
-        shutil.copy(Path(PROJECT_PATH) / "tools" / "fuzz_tools" / "cov_wrap_code_c.txt", local_out / "cov_wrap_code_c.txt")
+        shutil.copy(Path(PROJECT_PATH) / "agent_tools" / "fuzz_tools" / "cov_c.py", local_out / "cov_c.py")
+        shutil.copy(Path(PROJECT_PATH) / "agent_tools" / "fuzz_tools" / "cov_wrap_code_c.txt", local_out / "cov_wrap_code_c.txt")
         volumes = {local_out: {"bind": "/out", "mode": "rw"},
                    corpora_dir: {"bind": "/out/corpora", "mode": "rw"}}
         

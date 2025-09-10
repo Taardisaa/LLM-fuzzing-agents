@@ -7,7 +7,7 @@ from constants import PROJECT_PATH, FuzzEntryFunctionMapping,  LanguageType
 from langgraph.graph import StateGraph # type: ignore
 import re
 import random
-from typing import DefaultDict, Any
+from typing import DefaultDict, Any, Optional
 from pathlib import Path
 from tree_sitter import Language, Parser
 import tree_sitter_cpp
@@ -70,7 +70,7 @@ def _strip_templates(name: str) -> str:
             out.append(ch)                  # keep only when *not* inside <>
     return ''.join(out).replace(' ', '')    # also drop stray spaces
 
-def extract_name(function_signature: str, keep_namespace: bool=False)-> str:
+def extract_name(function_signature: str, keep_namespace: bool=False, exception_flag: bool=True)-> str:
 
     if  "N/A" in function_signature:
         return "N/A"
@@ -99,10 +99,15 @@ def extract_name(function_signature: str, keep_namespace: bool=False)-> str:
     query = lang.query(query_str)
     captures = query.captures(tree.root_node)
     if not captures:
-        raise ValueError(f"Function signature '{function_signature}' does not contain a valid function declaration.")
+        if exception_flag: 
+            raise ValueError(f"Function signature '{function_signature}' does not contain a valid function declaration.")
+        else:
+            return ""
     if len(captures) > 1:
-        raise ValueError(f"Function signature '{function_signature}' contains multiple function declarations, expected only one.")
-    
+        if exception_flag:
+            raise ValueError(f"Function signature '{function_signature}' contains multiple function declarations, expected only one.")
+        else:
+            return ""
 
     full_name = captures["function_name"][0]
     
@@ -147,7 +152,7 @@ def remove_color_characters(text: str) -> str:
     return ansi_escape.sub('', text)
 
 
-def load_pormpt_template(template_path: str) -> str:
+def load_prompt_template(template_path: str) -> str:
     '''Load the prompt template'''
     with open(template_path, 'r') as file:
         return file.read()
@@ -303,6 +308,9 @@ def get_benchmark_functions(bench_dir: Path, allowed_projects:list[str] = [],
             count = 0
             function_list: list[str] = []
             for function in data.get("functions"):
+                if "signature" not in function.keys():
+                    print(f"Function signature not found in {project_name} {function['name']}")
+                    continue
                 function_signature = function["signature"]
                 function_name = extract_name(function_signature, keep_namespace=True)
                 
@@ -318,5 +326,49 @@ def get_benchmark_functions(bench_dir: Path, allowed_projects:list[str] = [],
                 function_dict[project_name] = function_list
     return function_dict
 
+import json
+from langchain_core.messages import AIMessage, ToolCall
+def fix_qwen_tool_calls(res: Any) -> Optional[AIMessage]:
+
+    try:
+        tool_calls: list[ToolCall] = []  # Accumulate valid tool calls
+        for invalid_call in res.invalid_tool_calls:
+            function_name = invalid_call['name']
+            args_str = invalid_call['args']
+            # Split the concatenated JSON strings
+            args_list = re.findall(r'\{[^}]*\}', args_str)
+            
+            # Process each JSON string
+            for arg_json in args_list:
+                try:
+                    args = json.loads(arg_json)
+                    # Create a ToolCall object
+                    tool_call = ToolCall(
+                        id=invalid_call['id'],  # Use the original ID
+                        name=function_name,
+                        args=args
+                    )
+                    tool_calls.append(tool_call)
+
+                except json.JSONDecodeError as e:
+                    print(f"Failed to parse JSON: {e}")
+                except Exception as e:
+                    print(f"Error calling tool: {e}")
+            
+            # Create a synthetic AIMessage with the corrected tool calls
+            synthetic_ai_message = AIMessage(content=res.content, tool_calls=tool_calls)
+            
+            return synthetic_ai_message
+
+    except Exception as e:
+        print(f"Error in fix_qwen_tool_calls: {e}")
+        return None
+
+    
 if __name__ == "__main__":
-    function_statistics()
+
+    with open("/home/yk/code/LLM-reasoning-agents/benchmark-sets/ntu/gdk-pixbuf.yaml", 'r') as f:
+        data = yaml.safe_load(f)
+        project_name = data.get("project")
+        print(f"Project name: {project_name}")
+    # function_statistics()

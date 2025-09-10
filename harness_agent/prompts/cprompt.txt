@@ -1,0 +1,18 @@
+Generate a fuzz driver based the given function signature in C language. Output the full driver code in reply.
+{tool_prompt}
+
+@ examples of API usage:
+{function_usage}
+
+Useful project headers
+{header_files}
+
+{function_document}
+The following function fuzzes {function_name}
+extern {function_signature};
+
+The fuzzer entry point is defined as follows:
+extern int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size);
+int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size)
+
+Output the Full driver code in reply.

@@ -1,0 +1,13 @@
+```
+{harness_code}
+```
+
+The above {project_lang} code can be built successfully but has the following errors when runing fuzzer.
+
+{error_msg}
+
+Based on the above information, fix the code. 
+You code must be compilable and runnable. 
+Do not change the function signature of the harness function. 
+
+Must provide the full fixed code. 

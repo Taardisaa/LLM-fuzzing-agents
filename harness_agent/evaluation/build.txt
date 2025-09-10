@@ -1,0 +1,10 @@
+$CC $CFLAGS -c $SRC/openwrap.c -o $WORK/fuzz_wrappers.o
+
+
+# Link everything with libFuzzer + wrappers
+$CXX $CXXFLAGS $WORK/stream_fuzzer.o $WORK/fuzz_wrappers.o \
+    $LIB_FUZZING_ENGINE -Wl,--wrap=open -Wl,--wrap=fopen \
+    -o $OUT/stream_fuzzer
+
+
+clang++ -O1 -fno-omit-frame-pointer -gline-tables-only -Wno-error=enum-constexpr-conversion -Wno-error=incompatible-function-pointer-types -Wno-error=int-conversion -Wno-error=deprecated-declarations -Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=vla-cxx-extension -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION -fsanitize=address -fsanitize-address-use-after-scope -fsanitize=fuzzer-no-link -stdlib=libc++ /work/pixbuf_cons_fuzzer.o  $WORK/fuzz_wrappers.o  -o /out/pixbuf_cons_fuzzer -Wl,-Bdynamic -ldl -lm -lc -pthread -lrt -lpthread -Wl,-static -L/work/prefix/lib -Wl,--export-dynamic  -Wl,--wrap=open -Wl,--wrap=fopen -lgdk_pixbuf-2.0 -lm -lpng16 -ljpeg -lgio-2.0 -pthread -lgobject-2.0 -pthread -lffi -lgmodule-2.0 -pthread -lglib-2.0 -pthread -lz -fsanitize=fuzzer -Wl,-Bdynamic

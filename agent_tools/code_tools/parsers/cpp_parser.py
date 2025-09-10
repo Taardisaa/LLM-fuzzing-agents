@@ -90,29 +90,21 @@ decl_query_dict = {
 }
 
 
-related_query_dict = {
-            "normal_ret":   """
-            (
-            declaration
-                declarator: (function_declarator
-                declarator: (identifier) @func_name
-                parameters: (parameter_list
-                    (parameter_declaration
-                    type: (_) @type
-                    declarator: (_) @value))))@node_name
-            """,
-            "pointer_ret": """
-            (
-            declaration
-                declarator: (pointer_declarator
-                declarator: (function_declarator
-                declarator: (identifier) @func_name
-                parameters: (parameter_list
-                    (parameter_declaration
-                    type: (_) @type
-                    declarator: (_) @value)))))@node_name
-            """,
+func_declaration_query_dict = {
+  "declaration": """(declaration
+                    declarator: (function_declarator
+                    declarator: (identifier) @identifier_name
+                    )) @node_name""",
+                    
+    "pointer_declaration": """(declaration
+                    declarator: (pointer_declarator
+                    declarator: (function_declarator
+                    declarator: (identifier) @identifier_name
+                    ))) @node_name""",
 
+    "macro_func": """(preproc_function_def
+                    name: (identifier) @identifier_name
+                    ) @node_name""",
 }
 
 decl_query_dict.update(common_query_dict)
@@ -127,7 +119,7 @@ class CPPParser(BaseParser):
         pattern = r'(\bclass\s+)([A-Z_][A-Z0-9_]*\s+)'  # matches uppercase-style macro
         # Replace the macro with an empty string
         cleaned_code = re.sub(pattern, r'\1', cleaned_code) 
-        super().__init__(None, cleaned_code, decl_query_dict, def_query_dict, related_query_dict, LanguageType.CPP)
+        super().__init__(None, cleaned_code, decl_query_dict, def_query_dict, func_declaration_query_dict, LanguageType.CPP)
    
     def get_symbol_source(self, symbol_name: str, line: int, lsp_function: LSPFunction) -> tuple[str, str, int]:
         """
