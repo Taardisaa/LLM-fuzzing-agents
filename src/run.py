@@ -10,6 +10,7 @@ from harness_agent.main import ISSTAFuzzer
 from agent_tools.results_analysis import run_agent_res
 from bench_cfg import BenchConfig
 import traceback  # Add this at the top
+import json
 
 class Runner:
     def __init__(self, cfg_path: str):
@@ -25,13 +26,13 @@ class Runner:
         all_success_sig: list[str] = []
         for i in range(1, self.config.iterations):
 
-            res_file = os.path.join(self.config.save_root, f"success_name_{i}.pkl")
+            res_file = os.path.join(self.config.save_root, f"success_functions_{i}.json")
             if not os.path.exists(res_file):
                 continue
-                
-            with open(res_file, "rb") as f:
-                success_sig = pickle.load(f)
-                all_success_sig.extend(success_sig)
+
+            with open(res_file, "r") as f:
+                success_data = json.load(f)
+                all_success_sig.extend(success_data.keys())
 
         return all_success_sig
 
@@ -42,10 +43,11 @@ class Runner:
             function_list = function_dict[key]
             # filter out the functions that are already successful
             new_function_list: list[str] = []
+           
             for func_sig in function_list:
-                function_name = extract_name(func_sig, keep_namespace=True)
-                if (function_name not in success_func) and (function_name.lower() not in success_func):
-                    new_function_list.append(func_sig)
+                if func_sig in success_func:
+                    continue
+                new_function_list.append(func_sig)
 
             function_dict[key] = new_function_list
         return function_dict
@@ -191,7 +193,8 @@ if __name__ == "__main__":
         #  "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_header_oss_fuzz.yaml",
         # "/home/yk/code/LLM-reasoning-agents/cfg/claude_code_info_oss_fuzz.yaml",
         # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_example_public_rank.yaml",
-        "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/gpt5_mini_issta_yunhang.yaml",
+        "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/gpt5_mini_raw_wild.yaml",
+         "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/gpt5_mini_issta_wild.yaml",
         # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_code_info_agent.yaml",
         # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_code_info_oss_fuzz.yaml",
         #   "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_example_project_random.yaml",

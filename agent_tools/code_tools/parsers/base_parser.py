@@ -198,9 +198,11 @@ class BaseParser:
                     
                     # if the function name matches, check the namespace if any
                     call_str = root_node.text.decode("utf-8", errors="ignore") # type: ignore
-                    if "::" in call_str:
-                        # split the name space
-                        namespace = call_str.split("::")[:-1]
+                    call_prefix = call_str.split(pure_symbol_name)[0]
+                    call_prefix = call_prefix.strip()
+                    if call_prefix.endswith("::"):
+                        # split the name space, the last element is empty
+                        namespace = call_prefix.split("::")[:-1]
                         if self.match_namespace(namespace, symbol_name.split("::")[:-1]):
                                 return id_node
                     else:
@@ -230,7 +232,7 @@ class BaseParser:
                 return node
         return None
 
-    def get_fuzz_function_node(self, function_name: str) -> Optional[Node]:
+    def get_fuzz_function_node(self, function_name: str, expression_flag: bool = False) -> Optional[Node]:
         """
         Get the position of a function in the source code.
         :param function_name: The name of the function to find.
@@ -240,7 +242,26 @@ class BaseParser:
         # Fist find the Fuzz entry point
         entry_function = FuzzEntryFunctionMapping[self.project_lang]
         entry_node = self.get_definition_node(entry_function)
-        return self.get_call_node(function_name, entry_node)
+        call_node = self.get_call_node(function_name, entry_node)
+        if not expression_flag:
+            return call_node
+        
+        # return the expression node
+        if not call_node:
+            return None
+        
+        # find parent expression node
+        while call_node.parent:
+            call_node = call_node.parent
+            if call_node.type in ["expression_statement", "declaration"]:
+                return call_node
+            
+            if call_node.type == "translation_unit":
+                break
+        return None
+
+
+
       
     def is_fuzz_function_called(self, function_name: str) -> bool:
         if self.get_fuzz_function_node(function_name):

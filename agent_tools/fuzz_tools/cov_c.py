@@ -3,20 +3,10 @@
 import subprocess
 import argparse
 from typing import List, Optional
-import logging
 from pathlib import Path
 import json
 
-def setup_logging():
-    """Configure logging for the script."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s: %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    return logging.getLogger(__name__)
-
-def reply_corpus(fuzzer_name: str, corpus_path: str, timeout: int = 100) -> Optional[str]:
+def reply_corpus(fuzzer_name: str, corpus_path: str, timeout: int = 30) -> Optional[str]:
     """
     Run fuzzer and extract edge coverage.
     """
@@ -32,14 +22,15 @@ def reply_corpus(fuzzer_name: str, corpus_path: str, timeout: int = 100) -> Opti
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,  # Merge stderr into stdout (like 2>&1)
             text=True, 
-            timeout=timeout + 10  # Add extra timeout buffer
+            timeout=timeout + 5  # Add extra timeout buffer
         )
-      
     except subprocess.TimeoutExpired:
         msg = f"Error: Fuzzer command timed out after {timeout} seconds"
+        print(msg)
         return msg
     except Exception as e:
         msg = f"Error: running fuzzer {e}"
+        print(msg)
         return msg
 
 def sort_files(directory: Path) -> List[Path]:
@@ -109,6 +100,9 @@ def get_function_cov(fuzzer_name: str,  corpus_dir: str) -> tuple[int, int, str]
         if counter_sum != 0 and init_cov == 0:
             init_cov = counter_sum
         
+        # Skip empty counter maps
+        if len(counter_map) == 0:
+            continue
         # Perform bitwise OR operation manually
         merged_map = [a or b for a, b in zip(merged_map, counter_map)]
         
@@ -120,14 +114,10 @@ def get_function_cov(fuzzer_name: str,  corpus_dir: str) -> tuple[int, int, str]
 def main():
     """Main script entry point."""
     parser = argparse.ArgumentParser(description='Corpus Reduction Fuzzing Script')
-    parser.add_argument('--fuzzer-name', help='Path to fuzzer binary')
-    parser.add_argument('--corpus-dir', help='Path to corpus directory')
+    parser.add_argument('--fuzzer-name', default="server_fuzzer", help='Path to fuzzer binary')
+    parser.add_argument('--corpus-dir', default="./corpora/", help='Path to corpus directory')
     
     args = parser.parse_args()
-    
-    # Set up logging
-    global logger
-    logger = setup_logging()
     
     # Run corpus reduction
     init_cov, final_cov, msg = get_function_cov(

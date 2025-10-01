@@ -381,7 +381,26 @@ def logger_wrapper(logger: Optional[Any], msg: str, level: str = "info") -> None
     else:
         print(msg)
 
-        
+
+def write_list_to_file(item_list: list[str], file_path: Path) -> None:
+    """Write a list of items to a file, one item per line."""
+    with open(file_path, 'w') as f:
+        for item in item_list:
+            f.write(f"{item}\n")
+
+def get_ext_lang(file_path: Path) -> Optional[LanguageType]:
+    """Get the programming language from the file extension."""
+    ext = file_path.suffix.lower()
+    ext_lang_mapping = {
+        ".c": LanguageType.C,
+        ".c++": LanguageType.CPP,
+        ".cpp": LanguageType.CPP,
+        ".cc": LanguageType.CPP,
+        ".cxx": LanguageType.CPP,
+        ".java": LanguageType.JAVA,
+    }
+    return ext_lang_mapping.get(ext, None)
+          
 if __name__ == "__main__":
 
     with open("/home/yk/code/LLM-reasoning-agents/benchmark-sets/ntu/gdk-pixbuf.yaml", 'r') as f:

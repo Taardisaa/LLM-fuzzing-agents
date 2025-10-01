@@ -10,7 +10,7 @@ import json
 import shutil
 import logging
 from typing import Optional
-from utils.misc import logger_wrapper
+from utils.misc import logger_wrapper, get_ext_lang
 
 class CovCollector():
 
@@ -36,10 +36,10 @@ class CovCollector():
             return JavaParser
         else:
             raise Exception(f"Language {self.project_lang} not supported.")
-        
-    def gen_wrapped_code(self, harness_code: str, function_name: str) -> str:
+
+    def gen_wrapped_code(self, harness_code: str, function_name: str, harness_lang: LanguageType) -> str:
         # add the wrapper code to the harness code
-        wrap_file = Path(f"{PROJECT_PATH}/agent_tools/fuzz_tools/{COV_WRAP_FILE_NAME}_{self.project_lang.value.lower()}.txt")
+        wrap_file = Path(f"{PROJECT_PATH}/agent_tools/fuzz_tools/{COV_WRAP_FILE_NAME}_{harness_lang.value.lower()}.txt")
         if not wrap_file.exists():
             logger_wrapper(self.logger, f"Wrapper file {wrap_file} does not exist", level="error")
             return harness_code
@@ -48,7 +48,11 @@ class CovCollector():
         
         # find the fuzz entry
         parser = self.parser(None, harness_code)
-        fuzz_node = parser.get_fuzz_function_node(function_name)
+        fuzz_node = parser.get_fuzz_function_node(function_name, expression_flag=True)
+        if not fuzz_node:
+            logger_wrapper(self.logger, f"expression node not found", level="error")
+            fuzz_node = parser.get_fuzz_function_node(function_name)
+
         if fuzz_node:
             fuzz_start_row, fuzz_start_col, fuzz_end_row = fuzz_node.start_point.row, fuzz_node.start_point.column, fuzz_node.end_point.row
         else:
@@ -71,18 +75,21 @@ class CovCollector():
         if not entry_node:
             raise Exception(f"Entry function {entry_function} not found")
         
-        lines.insert(entry_node.start_point.row, wrap_code)
+        lines.insert(0, wrap_code)
         harness_code =  "\n".join(lines)
-
-        return harness_code
+        # add new line at the end
+        return harness_code+"\n"
 
 
     def recompile(self, harness_code: str,  harness_path: Path, fuzzer_name: str, function_name: str) -> bool:
-        if self.project_lang in [LanguageType.C, LanguageType.CPP]:
-            wrapped_code = self.gen_wrapped_code(harness_code, function_name)
+        
+        harness_lang = get_ext_lang(harness_path)
+
+        if harness_lang in [LanguageType.C, LanguageType.CPP]:
+            wrapped_code = self.gen_wrapped_code(harness_code, function_name, harness_lang)
         else:
-            logger_wrapper(self.logger, f"Language {self.project_lang} not supported for now", level="error")
-            raise Exception(f"Language {self.project_lang} not supported for now")
+            logger_wrapper(self.logger, f"Language {harness_lang} not supported for now", level="error")
+            raise Exception(f"Language {harness_lang} not supported for now")
 
         # init the compiler
         compiler = Compiler(self.oss_fuzz_dir, self.benchmark_dir,self.project_name, self.new_project_name)
@@ -126,12 +133,16 @@ class CovCollector():
 
         # copy the cov_c.py to the out directory
         shutil.copy(Path(PROJECT_PATH) / "agent_tools" / "fuzz_tools" / "cov_c.py", local_out / "cov_c.py")
-        shutil.copy(Path(PROJECT_PATH) / "agent_tools" / "fuzz_tools" / "cov_wrap_code_c.txt", local_out / "cov_wrap_code_c.txt")
+        # shutil.copy(Path(PROJECT_PATH) / "agent_tools" / "fuzz_tools" / "cov_wrap_code_c.txt", local_out / "cov_wrap_code_c.txt")
         volumes = {local_out: {"bind": "/out", "mode": "rw"},
                    corpora_dir: {"bind": "/out/corpora", "mode": "rw"}}
+        # we should not set the timeout too small, otherwise, the fuzzer may not finish
+        msg = self.docker_utils.run_cmd(cmd, volumes=volumes, working_dir="/out", timeout=600)
+        if "docker error" in msg.lower():
+            logger_wrapper(self.logger, f"Docker Error running the coverage collection: {msg}", level="error")
+            return 0, 0, False
         
-        self.docker_utils.run_cmd(cmd, volumes=volumes, working_dir="/out")
-
+        # sleep sev
         cov_path = local_out / "cov.json"
         if not cov_path.exists():
             logger_wrapper(self.logger, f"Coverage file {cov_path} does not exist", level="error")
@@ -150,3 +161,26 @@ class CovCollector():
                 return init_cov, final_cov, True
             else:
                 return init_cov, final_cov, False
+            
+
+
+if __name__ == "__main__":
+
+    # test the cov collector
+    oss_fuzz_dir = Path("/home/yk/code/oss-fuzz/")
+    benchmark_dir = Path("/home/yk/code/LLM-reasoning-agents/benchmark-sets/function_0/")    
+    save_dir = Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/agent")
+    project_name = ""
+    cov = CovCollector(
+        oss_fuzz_dir=oss_fuzz_dir,
+        benchmark_dir=benchmark_dir,
+        project_name=project_name,
+        new_project_name="",
+        project_lang=LanguageType.CPP,
+        logger=None
+    )
+
+    # harness_file = Path("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/agent/double-conversion/double_conversion_stringtodoubleconverter_stringtodouble/run1_tcbknjjcvifgvpiu/harness.txt")
+    # harness_file = Path("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/agent/dng_sdk/safeuint32mult/run1_xmnvadoqhamzuobb/harness.txt")
+    harness_file = Path("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/agent/geos/geosmakevalidwithparams/run1_lfxjdoysuhcvvgab/harness.txt")
+    cov.gen_wrapped_code(harness_file.read_text(), "GEOSMakeValidWithParams")

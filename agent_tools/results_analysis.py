@@ -7,6 +7,9 @@ from agent_tools.code_tools.parsers.cpp_parser import CPPParser
 from utils.misc import extract_name
 from pathlib import Path
 from typing import DefaultDict
+from utils.misc import write_list_to_file
+from typing import Any
+import json
 
 OSSFUZZ = Path("/home/yk/code/oss-fuzz")
 def get_language_info(project_name: str) -> str:
@@ -20,7 +23,7 @@ def get_language_info(project_name: str) -> str:
             return lang
     return "none"
 
-def get_run_res(work_dir: Path, semantic_mode: str="eval") -> tuple[EvalResult, bool]:
+def get_run_res(work_dir: Path, semantic_mode: str="eval") -> EvalResult:
 
     work_dir = Path(work_dir)
       # read the agent.log
@@ -32,19 +35,13 @@ def get_run_res(work_dir: Path, semantic_mode: str="eval") -> tuple[EvalResult, 
     function_name = extract_name(function_signature)
 
     if not log_file.exists():
-        return EvalResult.NoLogError, False
-    
+        return EvalResult.NoLogError
+
     log_lines = log_file.read_text()
    
-    # count the no usage case
-    if "Found 0 usage" in log_lines:
-        usage_flag = False
-    else:
-        usage_flag = True
-
     for line in log_lines.split("\n"):
         if "WARNING" in line and "Exit" in line:
-            return EvalResult.NoLogError, usage_flag
+            return EvalResult.NoLogError
 
     # for issta
     if semantic_mode in ["both", "eval"]:
@@ -53,41 +50,30 @@ def get_run_res(work_dir: Path, semantic_mode: str="eval") -> tuple[EvalResult, 
         pass_pattern = "NoError"
         
     if pass_pattern not in log_lines:
-        return EvalResult.Failed, usage_flag
+        return EvalResult.Failed
     
     if semantic_mode == "eval" and "Semantic check failed" in log_lines:
-        return EvalResult.Failed, usage_flag
+        return EvalResult.Failed
 
     parser = CPPParser(file_path=harness_path)
 
     if parser.exist_function_definition(function_name):
-        return EvalResult.Fake, usage_flag
+        return EvalResult.Fake
     
     if parser.is_fuzz_function_called(function_name):
-        return EvalResult.Success, usage_flag
+        return EvalResult.Success
     else:
-        return EvalResult.NoCall, usage_flag
- 
-def run_agent_res(output_path: Path, semantic_mode:str, n_run:int=1): 
+        return EvalResult.NoCall
 
-    res_count: DefaultDict[str, int] = defaultdict(int)
-    lang_count: DefaultDict[str, int] = defaultdict(int)
-    output_path = Path(output_path)
-    success_name_list:list[str] = []
-    failed_name_list:list[str] = []
-
-    res_file = output_path / f"res_{n_run}.txt"
-    # with open(res_file, "w") as save_f:
-    
-    # save the projects whose functions are all failed
-
-    build_failed_functions: list[str] = []
-    failed_projects: set[str] = set()
+def collect_run_info(output_path: Path, n_run:int=1, single_run:bool=False) -> tuple[list[tuple[str, str, Path]], list[str], set[str]]:
+    build_failed: list[str] = []
+    all_projects: set[str] = set()
     all_path:list[tuple[str, str, Path]] = []
     # sort the directory
     for project_path in sorted(output_path.iterdir()):
         if not project_path.is_dir():
             continue
+        all_projects.add(project_path.name)
 
         for function_path in project_path.iterdir():
             if not function_path.is_dir():
@@ -99,66 +85,77 @@ def run_agent_res(output_path: Path, semantic_mode:str, n_run:int=1):
                 if not work_dir.exists():
                     continue
                
-                  # get the run number
-                if "run" not in work_dir.name:
-                    continue
+                # get the run number
                 n = int(work_dir.name.split("_")[0][3:])
                 if n > n_run:
                     continue
+                if single_run and n != n_run:
+                    continue
+
                 # check if the directory is empty
                 if len(os.listdir(work_dir)) <= 4:
-                    build_failed_functions.append(f"{project_path.name}/{function_path.name}")
+                    build_failed.append(f"{project_path.name}/{function_path.name}")
                     continue
-              
-                all_path.append((project_path.name, function_path.name, work_dir))
-                failed_projects.add(project_path.name)
-        
+                func_sig_path = work_dir / "function.txt"
+                if not func_sig_path.exists():
+                    build_failed.append(f"{project_path.name}/{function_path.name}")
+                    continue
+                func_sig = func_sig_path.read_text().strip()
+
+                all_path.append((project_path.name, func_sig, work_dir))
+
+    return all_path, build_failed, all_projects
+
+def run_agent_res(output_path: Path, semantic_mode:str, n_run:int=1): 
+
+    res_count: DefaultDict[str, int] = defaultdict(int)
+    lang_count: DefaultDict[str, int] = defaultdict(int)
+    output_path = Path(output_path)
+    success_json:dict[str, Any] = {}
+
+    res_file = output_path / f"res_{n_run}.txt"
+    
+    # save the projects whose functions are all failed
+    all_path, build_failed, all_projects = collect_run_info(output_path, n_run=n_run)
     with open(res_file, "w") as save_f:
-        for project_name, function_name, work_dir in all_path:
-          
-            eval_res, usage_falg = get_run_res(work_dir, semantic_mode=semantic_mode)
+        for project_name, func_sig, work_dir in all_path:
+            function_name = extract_name(func_sig, keep_namespace=True)
+            eval_res = get_run_res(work_dir, semantic_mode=semantic_mode)
 
             if eval_res != EvalResult.Success:
-                if function_name not in failed_name_list:
-                    failed_name_list.append(function_name)
-                    res_count[eval_res.value] += 1
-                    save_f.write(f"{project_name}/{function_name}. fuzz res: {eval_res}\n")
+                res_count[eval_res.value] += 1
+                save_f.write(f"{project_name}/{function_name}. fuzz res: {eval_res}\n")
                 continue
 
-            if project_name in failed_projects:
-                failed_projects.remove(project_name)
+            if project_name in all_projects:
+                all_projects.remove(project_name)
             
             #  only count once
-            if function_name in success_name_list:
-                continue
-
             res_count[eval_res.value] += 1
-            success_name_list.append(function_name)
+
+            func_dict = {
+                "project": project_name,
+                "work_dir": str(work_dir),
+            }
+            success_json[func_sig] = func_dict
 
             # get language info
             lang = get_language_info(project_name)
             lang_count[lang] += 1
-            if usage_falg:
-                save_f.write(f"{project_name}/{function_name}. fuzz res: {eval_res}, HaveUsage\n")
-            else:
-                save_f.write(f"{project_name}/{function_name}. fuzz res: {eval_res}, NoUsage\n")
+            save_f.write(f"{project_name}/{function_name}. fuzz res: {eval_res}\n")
         
         save_f.write(f"Results count: {res_count}\n")
         save_f.write(f"Success:{res_count[EvalResult.Success.value] }\n")
         save_f.write(f"Language success count: {lang_count}\n")
 
-    with open(os.path.join(output_path, f"failed_projects_{n_run}.txt"), "w") as f:
-        for project in failed_projects:
-            f.write(f"{project}\n")
 
-    with open(os.path.join(output_path, f"build_failed_functions_{n_run}.txt"), "w") as f:
-        for func in build_failed_functions:
-            f.write(f"{func}\n")
-
-    pickle.dump(success_name_list, open(os.path.join(output_path, f"success_name_{n_run}.pkl"), "wb"))
-
+    write_list_to_file(list(all_projects), output_path / f"failed_projects_{n_run}.txt")
+    write_list_to_file(build_failed, output_path / f"build_failed_functions_{n_run}.txt")
+    # json dump
+    with open(output_path / f"success_functions_{n_run}.json", "w") as f:
+            json.dump(success_json, f, indent=4)
 
 if __name__ == "__main__":
 
-    run_agent_res(Path("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/raw/"), semantic_mode="eval", n_run=1)
+    run_agent_res(Path("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/issta"), semantic_mode="eval", n_run=1)
     # run_oss_fuzz_res()
