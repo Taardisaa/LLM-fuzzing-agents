@@ -400,7 +400,14 @@ def get_ext_lang(file_path: Path) -> Optional[LanguageType]:
         ".java": LanguageType.JAVA,
     }
     return ext_lang_mapping.get(ext, None)
-          
+
+def kill_process(process):
+    try:
+        if process and process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+    except:
+        pass      
 if __name__ == "__main__":
 
     with open("/home/yk/code/LLM-reasoning-agents/benchmark-sets/ntu/gdk-pixbuf.yaml", 'r') as f:

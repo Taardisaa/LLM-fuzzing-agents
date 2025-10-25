@@ -6,10 +6,18 @@ from typing import List, Optional
 from pathlib import Path
 import json
 
+def kill_process(process):
+    try:
+        if process and process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+    except:
+        pass
 def reply_corpus(fuzzer_name: str, corpus_path: str, timeout: int = 30) -> Optional[str]:
     """
     Run fuzzer and extract edge coverage.
     """
+    process = None
     try:
         # Construct command with optional merge flag
 
@@ -17,20 +25,23 @@ def reply_corpus(fuzzer_name: str, corpus_path: str, timeout: int = 30) -> Optio
         cmd.append(corpus_path)
         
         # Run command and capture output
-        subprocess.run(
+        process = subprocess.run(
             cmd, 
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,  # Merge stderr into stdout (like 2>&1)
             text=True, 
-            timeout=timeout + 5  # Add extra timeout buffer
+            timeout=timeout + 5,  # Add extra timeout buffer
+            start_new_session=True  # Prevents inheriting Pool's pipes
         )
     except subprocess.TimeoutExpired:
         msg = f"Error: Fuzzer command timed out after {timeout} seconds"
         print(msg)
+        kill_process(process)
         return msg
     except Exception as e:
         msg = f"Error: running fuzzer {e}"
         print(msg)
+        kill_process(process)
         return msg
 
 def sort_files(directory: Path) -> List[Path]:

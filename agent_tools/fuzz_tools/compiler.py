@@ -1,7 +1,8 @@
+from multiprocessing import process
 from utils.oss_fuzz_utils import OSSFuzzUtils
 from utils.docker_utils import DockerUtils
 from constants import CompileResults
-from utils.misc import save_code_to_file, remove_color_characters
+from utils.misc import save_code_to_file, remove_color_characters, kill_process
 import subprocess as sp
 import os
 import shutil
@@ -71,16 +72,19 @@ class Compiler():
         # recover the dockerfile, so that the harness file is not overwritten
 
         # run the build command
+        process = None
         try:
             # self.docker_tool.run_cmd(["find", "-name", "comp"])
-            sp_result = sp.run(self.build_harness_cmd,
+            process = sp.run(self.build_harness_cmd,
                    stdout=sp.PIPE,  # Capture standard output
                     # Important!, build fuzzer error may not appear in stderr, so redirect stderr to stdout
                    stderr=sp.STDOUT,  # Redirect standard error to standard output
                    text=True,  # Get output as text (str) instead of bytes
-                   check=True) # Raise exception if build fails
+                   check=True,
+                   start_new_session=True
+                   ) # Raise exception if build fails
 
-            build_msg = remove_color_characters(sp_result.stdout)
+            build_msg = remove_color_characters(process.stdout)
             # succeed to run build command
             fuzzer_name = os.path.join(self.oss_tool.get_path("fuzzer"), fuzzer_name)
             if os.path.exists(fuzzer_name):
@@ -89,7 +93,7 @@ class Compiler():
                 return CompileResults.FuzzerError, build_msg
 
         except sp.CalledProcessError as e:
-        
+            kill_process(process)
             # remove color characters
             build_msg = remove_color_characters(e.output)
             return CompileResults.CodeError, build_msg

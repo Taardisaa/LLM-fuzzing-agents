@@ -1,3 +1,4 @@
+from multiprocessing import process
 from utils.docker_utils import DockerUtils
 from constants import LanguageType, LSPFunction
 import json
@@ -7,7 +8,7 @@ from pathlib import Path
 from typing import Callable, Any
 import functools
 import re
-from utils.misc import add_lineno_to_code, filter_examples, extract_name
+from utils.misc import add_lineno_to_code, filter_examples, extract_name, kill_process
 import time
 import subprocess as sp
 def catch_exception(func: Callable[..., list[dict[str, Any]]]) -> Callable[..., list[dict[str, Any]]]:
@@ -97,18 +98,26 @@ class CodeRetriever():
 
         # view harness code
         for _, harness_path in self.harness_pairs.items():
-            if file_path.name == harness_path.name:
-                # copy the harness file to the container
-                # read local harness file
-                local_harness_path = self.oss_fuzz_dir / "projects" / self.new_project_name / harness_path.name
-                read_cmd = f"sed -n '{start_line},{end_line}p' {str(local_harness_path)}"
-                result = sp.run(read_cmd,
-                   stdout=sp.PIPE,  # Capture standard output
+            if file_path.name != harness_path.name:
+                continue
+            # read local harness file
+            local_harness_path = self.oss_fuzz_dir / "projects" / self.new_project_name / harness_path.name
+            read_cmd = f"sed -n '{start_line},{end_line}p' {str(local_harness_path)}"
+            process = None
+            try:
+                process = sp.run(read_cmd,
+                    stdout=sp.PIPE,  # Capture standard output
                     # Important!, build fuzzer error may not appear in stderr, so redirect stderr to stdout
-                   stderr=sp.STDOUT,  # Redirect standard error to standard output
-                   text=True,  # Get output as text (str) instead of bytes
-                   check=False)
-                result = result.stdout
+                    stderr=sp.STDOUT,  # Redirect standard error to standard output
+                text=True,  # Get output as text (str) instead of bytes
+                check=False,
+                start_new_session=True  # Prevents inheriting Pool's pipes
+                )
+                result = process.stdout
+            except Exception as e:
+                self.logger.error(f"Error reading harness file {local_harness_path}: {e}")
+                kill_process(process)
+                return f"Error reading harness file {local_harness_path}: {e}"
 
         # Use exec_in_container instead of run_cmd
         result = self.docker_tool.exec_in_container(self.container_id, read_cmd)

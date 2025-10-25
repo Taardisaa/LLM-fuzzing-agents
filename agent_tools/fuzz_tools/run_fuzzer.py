@@ -18,6 +18,14 @@ class FuzzerRunner():
 
         
     def run_fuzzing(self, counter: int, fuzzer_name: str) -> tuple[ValResult, list[str], list[list[str]]]:
+        
+        def kill_process(process):
+            try:
+                if process and process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=5)
+            except:
+                pass
         # run the fuzzing
         print(f"Running fuzzer {fuzzer_name} for {self.new_project_name}...")
         # create the corpus directory
@@ -42,14 +50,15 @@ class FuzzerRunner():
         log_file_path = self.save_dir / f"fuzzing{counter}.log"
       # Define the error patterns
         error_patterns = ['ERROR: LeakSanitizer',  'ERROR: libFuzzer:', 'ERROR: AddressSanitizer']
-        
 
+        process = None
         try:
             # Run process and filter output
             process = sp.Popen(command,
                 stdout=sp.PIPE,
                 stderr=sp.STDOUT,
-                bufsize=0  # Unbuffered for real-time output
+                bufsize=0,  # Unbuffered for real-time output
+                start_new_session=True  # ← Prevents helper.py/docker from inheriting Pool's pipes
             )
             
             with open(log_file_path, "w", encoding='utf-8', errors='ignore') as log_file:
@@ -58,7 +67,7 @@ class FuzzerRunner():
                 done_found = False
                 crash_found = False
                 # Read line by line from binary output
-                for line_bytes in iter(process.stdout.readline, b''):
+                for line_bytes in iter(process.stdout.readline, b''): # type: ignore
                     # Decode with error handling - replace invalid chars
                     line = line_bytes.decode('utf-8', errors='ignore')
                     # log_file.write(line)
@@ -86,7 +95,11 @@ class FuzzerRunner():
             
         except sp.TimeoutExpired:
             # sleep some time to make sure the log file is written, otherwise, some part of the log file may be missing
+            kill_process(process) # ensure process is killed on timeout
             time.sleep(1)
             return FuzzLogParser(self.project_lang).parse_log(log_file_path)
         except Exception:
+            kill_process(process)
             return FuzzLogParser(self.project_lang).parse_log(log_file_path)
+        finally:
+            kill_process(process)

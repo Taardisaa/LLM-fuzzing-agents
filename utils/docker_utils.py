@@ -31,7 +31,7 @@ class DockerUtils:
     def build_image(self, build_image_cmd: list[str]) -> bool:
         '''Build the image for the project'''
         try:
-            sp.run(build_image_cmd, stdin=sp.DEVNULL, stdout=sp.DEVNULL, stderr=sp.STDOUT, check=True, timeout=1200)
+            sp.run(build_image_cmd, stdin=sp.DEVNULL, stdout=sp.DEVNULL, stderr=sp.STDOUT, check=True, timeout=1200, start_new_session=True)
             # sp.run(build_image_cmd, stdin=sp.DEVNULL, stdout=None, stderr=None, check=True, timeout=600)
             return True
         except sp.CalledProcessError as e:
