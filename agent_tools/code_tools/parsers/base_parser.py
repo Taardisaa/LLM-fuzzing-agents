@@ -215,7 +215,6 @@ class BaseParser:
     def get_identifier_name(self, root_node:Node) -> str:
 
         # TODO C/C++ function name is the first child of the call expression
-        # TODO C/C++ function name is the first child of the call expression
         id_node = self.match_child_node(root_node, ["identifier", "field_identifier"], recusive_flag=True)
         if id_node:
             return id_node.text.decode("utf-8", errors="ignore") # type: ignore
@@ -284,7 +283,8 @@ class BaseParser:
     
     def is_fuzz_function_called(self, function_name: str) -> bool:
 
-        
+        # this prevents infinite loop
+        visited_nodes: list[str] = []
         def_node_name = function_name
         while def_node_name != FuzzEntryFunctionMapping[self.project_lang]:
             call_node = self.get_call_node(def_node_name, self.tree.root_node)
@@ -301,6 +301,9 @@ class BaseParser:
             def_node_name = self.get_identifier_name(def_node)
             if not def_node_name:
                 return False
+            if def_node_name in visited_nodes:
+                return False
+            visited_nodes.append(def_node_name)
 
         return True
     
