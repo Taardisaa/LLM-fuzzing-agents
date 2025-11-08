@@ -15,7 +15,7 @@ FUZZMSG = {
     ValResult.ConstantCoverageError: "The above code can be built successfully but its fuzzing seems not effective since the coverage never change. Please make sure the fuzz data is used.",
     ValResult.ReadLogError: "The above code can be built successfully but it generates a extreme large log which indicates the fuzz driver may include some bugs. Please do not print any information. ",
     ValResult.LackCovError: "The above code can be built successfully but its fuzzing seems not effective since it lack the initial or final code coverage info. Please make sure the fuzz data is used.",
-    ValResult.NoCall: "The above code can be built successfully but the fuzz function is not called in the harness. Please make sure to call the fuzz function.",
+    ValResult.NoCall: "The above code can be built successfully but the target function is not called in the harness. Please make sure to call the target function.",
     ValResult.Fake: "The above code can be built successfully but you use fake definition. Please make sure to use the target fuzz function from project."
 }
 class Validation(FuzzerRunner):

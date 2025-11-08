@@ -103,7 +103,6 @@ class FuzzLogParser():
     def parse_str(self, log: str) -> tuple[ValResult, list[str], list[list[str]]]:
         """Parse the log file and extract errors."""
 
-        assert isinstance(log, str), "log must be a string"
         # This only test on libfuzzer for c/c++ project
 
         # Define the error patterns
@@ -152,7 +151,7 @@ class FuzzLogParser():
 
 
 if __name__ == "__main__":
-    log_file = "/home/yk/code/LLM-reasoning-agents/outputs/issta1/igraph_vydpfqhpudatcelq/fuzzing5.log"  # Replace with your log file path
+    log_file = "/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/raw/clamav/cl_scandesc/run1_bnifjesuxjjeqtch/fuzzing0.log"  # Replace with your log file path
     # with open(log_file, "r") as file:
         # log = file.read()
     parser = FuzzLogParser(LanguageType.C)

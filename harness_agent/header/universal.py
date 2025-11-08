@@ -13,7 +13,7 @@ class HeaderCompilerWraper(CompilerWraper):
                      save_dir: Path, cache_dir: Path, logger: logging.Logger):
         super().__init__(oss_fuzz_dir, project_name, new_project_name, code_retriever, project_lang, harness_dict, save_dir, cache_dir, logger)
 
-    def compile(self, state: dict[str, Any]) -> dict[str, Any]: # type: ignore
+    def compile_harness(self, state: dict[str, Any]) -> dict[str, Any]: # type: ignore
         '''
         Compile the harness code with the header files.
         '''
@@ -32,4 +32,4 @@ class HeaderCompilerWraper(CompilerWraper):
         
         # add all headers to the state, this will not replace the existing harness code
         state["harness_code"] = new_harness_code
-        return super().compile(state) # type: ignore
+        return super().compile_harness(state) # type: ignore

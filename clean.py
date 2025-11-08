@@ -39,7 +39,18 @@ def remove_def_cache(directory: str):
             except Exception as e:
                 print(f"Error deleting {path}: {e}")
 
-
+def remove_empty_cache(directory: str):
+    for path in Path(directory).rglob('*.json'):
+        
+        with open(path, 'r') as f:
+            content = f.read().strip()
+            if content == "{}" or content == "[]":
+                try:
+                    path.unlink()
+                    print(f"Deleted empty cache: {path}")
+                except Exception as e:
+                    print(f"Error deleting {path}: {e}")
+      
 def remove_failed_dir(directory: str):
     
     total_removed = 0
@@ -191,8 +202,10 @@ def remove_empty_dir(dir: Path):
 
     print(f"Total removed empty dirs: {count}")
 
-remove_evaluation(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/agent"))
+# remove_failed_dir("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/agent")
+remove_empty_cache("/home/yk/code/LLM-reasoning-agents/cache")
+# remove_evaluation(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/agent"))
 # Example usage
 # remove_corpus_dir("/home/yk/code/LLM-reasoning-agents/outputs_wild")
 # remove_large_log_files("/home/yk/code/LLM-reasoning-agents/outputs_wild")
-# remove_run_dir("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/raw", n_run=3)
+# remove_run_dir("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/agent", n_run=2)

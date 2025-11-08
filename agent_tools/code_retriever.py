@@ -1,4 +1,4 @@
-from multiprocessing import process
+# from multiprocessing import process
 from utils.docker_utils import DockerUtils
 from constants import LanguageType, LSPFunction
 import json
@@ -10,7 +10,9 @@ import functools
 import re
 from utils.misc import add_lineno_to_code, filter_examples, extract_name, kill_process
 import time
+import random
 import subprocess as sp
+
 def catch_exception(func: Callable[..., list[dict[str, Any]]]) -> Callable[..., list[dict[str, Any]]]:
     @functools.wraps(func)
     def wrapper(self: Any, *args: Any, **kwargs: Any)->list[dict[str, Any]]: 
@@ -77,28 +79,90 @@ class CodeRetriever():
         except Exception as e:
             self.logger.error(f"Error stopping container: {e}")
 
- 
-    def view_code(self, file_path_str: str, lineno: int, context_window: int=100, num_flag: bool=True) -> str:
+    def get_file_location_tool(self, file_path: str) -> list[str]:
         """
-        View the code around the given line number for file path. This tool will return read [lineno-20, lineno+context_window] lines.
+        Get the absolute path of a file in the project codebase.
         Args:
-            file_path (str): The absolute path to the file to read from, like /src/xx/xx.c
-            lineno (int): The target line number (1-indexed).
+            file_path (str): The relative file path to search for.
         Returns:
-            str: The extracted code as a string.
+            list[str]: A list of absolute file paths.
         """
-        if context_window > 100:
-            context_window = 100  # limit the context window to 100
-        file_path = Path(file_path_str).resolve(strict=False)  
+        # normalize the file path
+        new_path = Path(file_path).resolve(strict=False)  
+        path_name = new_path.name
+
+        # find in container
+        find_cmd = f"find /src -name {path_name}"
+        result = self.docker_tool.exec_in_container(self.container_id, find_cmd)
+        if result.startswith(DockerResults.Error.value):
+            self.logger.error(f"Failed to find file in container: {result}")
+            return []
+        abs_paths = result.strip().splitlines()
+        return abs_paths
+
+    def get_driver_example_tool(self) -> str:
+        """
+        Randomly select one harness file in the container and return its content. 
+        The driver examples may include some useful headers and code snippets for using the project API.
+        Returns:
+            str: The content of the selected harness file.
+        """
+        harness_files = self.get_all_driver_examples()
+        if not harness_files:
+            return ""
+        selected_file = random.choice(harness_files)
+        return selected_file[1][:200]
+
+    def get_all_driver_examples(self) -> list[tuple[str, str]]:
+        """
+        Read all harness files in the container and return their content.
+        Returns:
+            list[tuple[str, str]]: A list of tuples containing harness file names and their content.
+        """
+        driver_list: list[tuple[str, str]] = []
+        end_line = 2000
+        for _, harness_path in self.harness_pairs.items():
+            read_cmd = f"sed -n '1,{end_line}p' {harness_path}"
+            result = self.docker_tool.exec_in_container(self.container_id, read_cmd)
+            if "sed: " in result:
+                continue
+            driver_list.append((harness_path.name, add_lineno_to_code(result, start_lineno=1)))
+        return driver_list
+    
+
+
+    def view_code(self, file_path: str, lineno: int, context_window: int=100, num_flag: bool=True) -> str:
+        """
+        View code around a specific file path and line.
+
+        Usage guidance (important for tool-calling LLMs):
+        - Use this only when you already know an exact file path and a target line.
+        - Prefer get_symbol_definition_tool / get_symbol_header_tool / get_symbol_references_tool first to locate symbols.
+        - Keep context_window small (<= 200). This call is for precise peeks, not broad browsing.
+
+        Behavior:
+        - Returns lines in [lineno-20, lineno+context_window]. If the file is a locally generated harness, it is read from the local workspace; otherwise it is read from the container.
+
+        Args:
+            file_path (str): Absolute path to the file to read from, like /src/foo/bar.c
+            lineno (int): The target line number (1-indexed).
+            context_window (int): Max lines after lineno to include (capped at 200).
+            num_flag (bool): If True, prefix lines with line numbers.
+        Returns:
+            str: The extracted code as a string, or an error message if not found.
+        """
+        if context_window > 200:
+            context_window = 200  # limit the context window to 100
+        new_file_path = Path(file_path).resolve(strict=False)  
 
         # Read the file from the docker container
         start_line =  max(lineno - 20, 1)
         end_line = lineno + context_window
-        read_cmd = f"sed -n '{start_line},{end_line}p' {file_path}"
+        read_cmd = f"sed -n '{start_line},{end_line}p' {str(new_file_path)}"
 
         # view harness code
         for _, harness_path in self.harness_pairs.items():
-            if file_path.name != harness_path.name:
+            if new_file_path.name != harness_path.name:
                 continue
             # read local harness file
             local_harness_path = self.oss_fuzz_dir / "projects" / self.new_project_name / harness_path.name
@@ -111,9 +175,11 @@ class CodeRetriever():
                     stderr=sp.STDOUT,  # Redirect standard error to standard output
                 text=True,  # Get output as text (str) instead of bytes
                 check=False,
+                shell=True,
                 start_new_session=True  # Prevents inheriting Pool's pipes
                 )
                 result = process.stdout
+                return add_lineno_to_code(result, start_lineno=start_line) if num_flag else result
             except Exception as e:
                 self.logger.error(f"Error reading harness file {local_harness_path}: {e}")
                 kill_process(process)
@@ -195,9 +261,7 @@ class CodeRetriever():
         Returns:
              list[dict]: [{"source_code":"", "file_path":"", "line":""}]
         """
-        if " " in symbol_name:
-            symbol_name = symbol_name.split(" ")[1]  # using the second part of the symbol name
-        
+
         # fmt::v11::detail::print(FILE *, string_view)
         # the LLM may pass the whole fuinction signature, we need to extract the symbol name
         if "(" in symbol_name:
@@ -210,12 +274,14 @@ class CodeRetriever():
                 symbol_name = symbol_name.split("(")[0]
                 
         # Remove the "struct" or "class" prefix from the symbol name
-        if symbol_name.startswith("struct") or symbol_name.startswith("class"):
+        elif symbol_name.startswith("struct") or symbol_name.startswith("class"):
             symbol_name = symbol_name.split(" ")[1]
 
-        if "<" in symbol_name:
+        elif "<" in symbol_name:
             # If the symbol name contains template, we only use the part before the template
             symbol_name = symbol_name.split("<")[0]
+        elif " " in symbol_name:
+            symbol_name = symbol_name.split(" ")[1]  # using the second part of the symbol name
 
         if retriever == Retriever.Mixed:
             start = time.time()
@@ -227,18 +293,19 @@ class CodeRetriever():
             resp = self.get_symbol_info_retriever(symbol_name, lsp_function, retriever)
         
         # deduplicate the response based on source_code
-        unique_sources: set[str] = set()
+        unique_sources: set[tuple[str, str]] = set()
         deduped_resp: list[dict[str, Any]] = []
         for item in resp:
             source_code = item.get("source_code", "")
+            file_path = item.get("file_path", "")
             # if source_code is not empty and not in unique_sources, add it to the deduped_resp
             if source_code:
-                if source_code not in unique_sources:
-                    unique_sources.add(source_code)
+                if (source_code, file_path) not in unique_sources:
+                    unique_sources.add((source_code, file_path))
                     deduped_resp.append(item)
             # if source_code is empty, just add it to the deduped_resp
             else:
-                unique_sources.add(source_code)
+                unique_sources.add((source_code, file_path))
                 deduped_resp.append(item)
 
         self.logger.info(f"Found {len(resp)} {lsp_function.value} for {symbol_name} with {retriever.value} retriever")
@@ -259,7 +326,8 @@ class CodeRetriever():
         if save_path.exists():
             self.logger.info(f"Getting {lsp_function} for {symbol_name} from cache")
             with open(save_path, "r") as f:
-                return json.load(f)
+                resp = json.load(f)
+                return resp # return the cached response
         
         # call the container code retriever
         lsp_resp = self.call_container_code_retriever(symbol_name, lsp_function, retriever)
@@ -332,6 +400,7 @@ class CodeRetriever():
             >>> get_symbol_header("ada::parser::parse_url<ada::url>")
             "/src/ada-url/ada/url.h"
         """
+        symbol_name = symbol_name.strip()
         # First check if it's a standard library symbol
         stdlib_header = self.get_stdlib_header(symbol_name)
         if stdlib_header:
@@ -442,14 +511,14 @@ class CodeRetriever():
     
     def get_all_symbol_references(self, symbol_name: str, retriever: Retriever = Retriever.Mixed) -> list[dict[str, Any]]:
         return  self.get_symbol_info(symbol_name, LSPFunction.References, retriever)
-        
-    def get_symbol_references(self, symbol_name: str, retriever: Retriever = Retriever.Parser) -> str:
+
+    def get_symbol_references(self, symbol_name: str, retriever: Retriever = Retriever.Mixed) -> str:
         """
-        Get references to a symbol across all workspace files.   
-        If the symbol has namespace, you must include it. For example, passing "ada::parser::parse_url<ada::url>" instead of "parse_url" as the symbol name. 
-        Do not include give the function signature or the file path, just the symbol name.
+        Get references to a function name across all workspace files. Note that this tool only retrieves references for functions, not variables or classes.   
+        If the function has namespace, you must include it. For example, passing "ada::parser::parse_url<ada::url>" instead of "parse_url" as the function name. 
+        Do not include give the function signature or the file path, just the function name.
         Args:
-            symbol_name (str): The name of the symbol to find references for
+            symbol_name (str): The name of the function to find references for
         Returns:
             str: A string containing the source code of the references
         Example:
@@ -464,7 +533,6 @@ class CodeRetriever():
         ref_list = self.get_symbol_info(symbol_name, LSPFunction.References, retriever)
         
         example = filter_examples(ref_list, self.project_lang, self.usage_token_limit)
-    
 
         # comment the example
         example_msg = f"\n // the usage of {symbol_name} is as follows: \n"
@@ -549,7 +617,7 @@ class CodeRetriever():
         primitive_types = {"int", "char", "float", "double", "void", "long", "short", "signed", "unsigned"}
         if symbol_name in primitive_types:
             self.logger.info(f"Symbol {symbol_name} is a primitive type and doesn't require a header")
-            return f"// {symbol_name} is a primitive type and doesn't require a header"
+            return LSPResults.NoResult.value + f"// {symbol_name} is a primitive type and doesn't require a header"
         
         # Standard library symbols mapping
         std_lib_symbols = {
@@ -622,7 +690,7 @@ class CodeRetriever():
     def get_symbol_definition_tool(self, symbol_name: str) -> str:
         return self.get_symbol_definition(symbol_name, Retriever.Mixed)
     def get_symbol_references_tool(self, symbol_name: str) -> str:
-        return self.get_symbol_references(symbol_name, Retriever.Parser)
+        return self.get_symbol_references(symbol_name, Retriever.Mixed)
     def get_struct_related_functions_tool(self, symbol_name: str) -> str:
         return self.get_struct_related_functions(symbol_name, Retriever.Mixed)
   

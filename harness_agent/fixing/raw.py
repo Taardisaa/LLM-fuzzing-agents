@@ -52,14 +52,21 @@ class FixerPromptBuilder:
         if fix_counter == 0 or self.benchcfg.clear_msg_flag:
             # clear previous messages, need to build the fix prompt based on the provided template 
             state["messages"].clear()
-            if last_message.startswith(CompileResults.CodeError.value):
+            if last_message.startswith(CompileResults.CodeError.value) or \
+               last_message.startswith(CompileResults.LinkError.value) or \
+               last_message.startswith(CompileResults.IncludeError.value) or \
+               last_message.startswith(CompileResults.MissingHeaderError.value):
                 fix_prompt = self.build_compile_prompt(state["harness_code"], state["build_msg"], state["fuzzer_path"])
             else:
                 fix_prompt = self.build_fuzz_prompt(state["harness_code"], state["fuzz_msg"], state["fuzzer_path"])
         else:
             # keep the previous messages, just add the error message
-            if last_message.startswith(CompileResults.CodeError.value):
-                fix_prompt = "Complie Error Messages:\n" + state["build_msg"]
+            if last_message.startswith(CompileResults.CodeError.value) or \
+               last_message.startswith(CompileResults.LinkError.value) or \
+               last_message.startswith(CompileResults.IncludeError.value) or \
+               last_message.startswith(CompileResults.MissingHeaderError.value):
+                
+                fix_prompt = "Compile Error Messages:\n" + state["build_msg"]
             else:
                 fix_prompt = "Fuzz Error Messages:\n" + state["fuzz_msg"]
 

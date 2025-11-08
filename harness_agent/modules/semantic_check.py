@@ -471,7 +471,7 @@ class SemaCheck():
             # init the compiler
             compiler = Compiler(self.oss_fuzz_dir,self.benchmark_dir, self.project_name, self.new_project_name)
             # compile the code
-            compile_res, build_msg = compiler.compile(wrapped_code, fuzzer_path, fuzzer_name)
+            compile_res, build_msg = compiler.compile_harness(wrapped_code, fuzzer_path, fuzzer_name)
             if compile_res != CompileResults.Success:
                 # print(f"Compile error: {build_msg}")
                 return False

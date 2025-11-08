@@ -1,2 +1,2 @@
-You can call the following tools to get more information about the code:
-- get_symbol_header: Get the header file of a symbol. Header file must be included using the absolute path, like #include "/path/to/header.h"
+You can call the following tool to get header information. Prefer absolute paths first; if that fails, try project-relative paths:
+- get_symbol_header_tool — Get the header file(s) of a symbol. Try #include "/path/to/header.h" first; if it fails with ".h file not found", try a relative include path.

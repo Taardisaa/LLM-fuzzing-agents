@@ -94,7 +94,7 @@ class CovCollector():
         # init the compiler
         compiler = Compiler(self.oss_fuzz_dir, self.benchmark_dir,self.project_name, self.new_project_name)
         # compile the code
-        compile_res, build_msg = compiler.compile(wrapped_code, harness_path, fuzzer_name)
+        compile_res, build_msg = compiler.compile_harness(wrapped_code, harness_path, fuzzer_name)
         if compile_res != CompileResults.Success:
             logger_wrapper(self.logger, f"Compile error: {build_msg}", level="error")
             return False
@@ -169,8 +169,8 @@ if __name__ == "__main__":
     # test the cov collector
     oss_fuzz_dir = Path("/home/yk/code/oss-fuzz/")
     benchmark_dir = Path("/home/yk/code/LLM-reasoning-agents/benchmark-sets/function_0/")    
-    save_dir = Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/agent")
-    project_name = ""
+    save_dir = Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/raw")
+    project_name = "icu"
     cov = CovCollector(
         oss_fuzz_dir=oss_fuzz_dir,
         benchmark_dir=benchmark_dir,
@@ -182,5 +182,6 @@ if __name__ == "__main__":
 
     # harness_file = Path("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/agent/double-conversion/double_conversion_stringtodoubleconverter_stringtodouble/run1_tcbknjjcvifgvpiu/harness.txt")
     # harness_file = Path("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/agent/dng_sdk/safeuint32mult/run1_xmnvadoqhamzuobb/harness.txt")
-    harness_file = Path("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/agent/geos/geosmakevalidwithparams/run1_lfxjdoysuhcvvgab/harness.txt")
-    cov.gen_wrapped_code(harness_file.read_text(), "GEOSMakeValidWithParams")
+    harness_file = Path("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/raw/icu/icu_76_message2_standardfunctions_datetime_format/run3_gqhquqnejeigukff/harness.txt")
+    
+    cov.gen_wrapped_code(harness_file.read_text(), "icu_76::message2::StandardFunctions::DateTime::format", LanguageType.CPP)

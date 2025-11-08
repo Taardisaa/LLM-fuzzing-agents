@@ -1,4 +1,3 @@
-from multiprocessing import process
 from utils.oss_fuzz_utils import OSSFuzzUtils
 from utils.docker_utils import DockerUtils
 from constants import CompileResults
@@ -11,7 +10,7 @@ from typing import Optional
 
 class Compiler():
 
-    def __init__(self, oss_fuzz_dir: Path, benchmark_dir: Path, project_name: str, new_project_name: str):
+    def __init__(self, oss_fuzz_dir: Path, benchmark_dir: Path, project_name: str, new_project_name: str, include_path: Optional[set[str]]=None):
 
         self.oss_fuzz_dir = oss_fuzz_dir
         self.project_name = project_name
@@ -26,6 +25,8 @@ class Compiler():
         # self.build_harness_cmd = ["python", os.path.join(self.oss_fuzz_dir, "infra", "helper.py"),
                             # "build_fuzzers", "--clean", self.new_project_name,  "--", "-fsanitize=fuzzer", "-fsanitize=address", "-fsanitize-coverage=trace-pc-guard"]
         self.build_image_cmd =  self.oss_tool.get_script_cmd("build_image")
+        self.include_path: set[str] = include_path if include_path else set()
+
 
     def write_dockerfile(self, harness_path: Path, cmd: Optional[str]=None, write_flag: bool=True) -> None:
         '''Copy the harness file to overwrite all existing harness files'''
@@ -49,8 +50,33 @@ class Compiler():
 
             if cmd:
                 f.write(f'{cmd}\n')
+
+    def write_build_script(self) -> None:
+        '''Copy the harness file to overwrite all existing harness files'''
+        # write copy in build.sh and re-build the image
+        if not self.include_path:
+            return
     
-    def compile(self,  harness_code: str, harness_path: Path, fuzzer_name: str, cmd: Optional[str]=None) -> tuple[CompileResults, str]:
+        build_script_path = self.oss_fuzz_dir / "projects" / self.new_project_name / 'build.sh'
+        build_script_bak = build_script_path.with_suffix('.bak')
+
+        # resotre the old build script
+        if build_script_bak.exists():
+            shutil.copy(build_script_bak, build_script_path)
+        else:
+            shutil.copy(build_script_path, build_script_bak)
+
+        # insert the export CFLAGS after the first line
+        all_lines = build_script_path.read_text().splitlines()
+
+        include_flags = ' '.join([f'-I{path}' for path in self.include_path])
+        all_lines.insert(1, f'export CFLAGS="$CFLAGS {include_flags}"')
+        all_lines.insert(2, f'export CXXFLAGS="$CXXFLAGS {include_flags}"')
+        
+        with open(build_script_path, 'w') as f:
+            f.writelines('\n'.join(all_lines))
+        
+    def compile_harness(self,  harness_code: str, harness_path: Path, fuzzer_name: str, cmd: Optional[str]=None) -> tuple[CompileResults, str]:
         '''Compile the generated harness code'''
 
         # Run build.sh. There are two possible outcomes:
@@ -59,7 +85,8 @@ class Compiler():
 
         # write the dockerfile
         self.write_dockerfile(harness_path, cmd)
-        
+        self.write_build_script()
+
         # save the target to the project
         local_harness_path = self.oss_fuzz_dir / "projects" / self.new_project_name / harness_path.name 
         save_code_to_file(harness_code, local_harness_path)

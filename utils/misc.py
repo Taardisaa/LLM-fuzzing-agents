@@ -172,6 +172,7 @@ def add_lineno_to_code(code: str, start_lineno: int) -> str:
         numbered_code += f"// {start_lineno + i}: {line}\n"
     return numbered_code
 
+
 # def load_model_by_name(model_name: str, temperature: float = 0.7) -> BaseChatModel:
 #     '''Load the model by name'''
 
@@ -401,13 +402,28 @@ def get_ext_lang(file_path: Path) -> Optional[LanguageType]:
     }
     return ext_lang_mapping.get(ext, None)
 
-def kill_process(process):
+def kill_process(process: Any) -> None: 
     try:
         if process and process.poll() is None:
             process.kill()
             process.wait(timeout=5)
     except:
         pass      
+
+
+def is_empty_json_file(json_path: Path) -> bool:
+    """Check if a JSON file is empty or contains an empty list/dict."""
+    if not json_path.exists():
+        return True
+
+    try:
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+            if not data:  # Check for empty list or dict
+                return True
+            return False
+    except json.JSONDecodeError:
+        return True
 if __name__ == "__main__":
 
     with open("/home/yk/code/LLM-reasoning-agents/benchmark-sets/ntu/gdk-pixbuf.yaml", 'r') as f:

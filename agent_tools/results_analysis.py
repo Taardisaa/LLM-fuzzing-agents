@@ -136,7 +136,8 @@ def run_agent_res(output_path: Path, semantic_mode:str, n_run:int=1):
                 "project": project_name,
                 "work_dir": str(work_dir),
             }
-            success_json[func_sig] = func_dict
+
+            success_json[project_name+ "+" + func_sig] = func_dict
 
             # get language info
             lang = get_language_info(project_name)
@@ -154,10 +155,10 @@ def run_agent_res(output_path: Path, semantic_mode:str, n_run:int=1):
     with open(output_path / f"success_functions_{n_run}.json", "w") as f:
             json.dump(success_json, f, indent=4)
 
-
-def get_evaluation_results(eval_path: Path):
+def get_run_path(save_dir:Path, n_run:int=1) -> list[Path]:
     
-    for project_path in sorted(eval_path.iterdir()):
+    run_list: list[Path] = []
+    for project_path in sorted(save_dir.iterdir()):
         if not project_path.is_dir():
             continue
 
@@ -165,26 +166,79 @@ def get_evaluation_results(eval_path: Path):
             if not function_path.is_dir():
                 continue
 
+            run_flag = False
             for run_dir in function_path.iterdir():
                 if not run_dir.is_dir():
                     continue
-
-                cov_file = run_dir / "cov.txt"
-                if not cov_file.exists():
+                if int(run_dir.name.split("_")[0][3:]) != n_run:
                     continue
+                run_list.append(run_dir)
+                run_flag = True
+                break
+            if not run_flag:
+                print(f"Run{n_run} directory not found for {project_path.name}/{function_path.name}")
 
-                # cov_lines = cov_file.read_text().split("\n")
-                # init_cov = 0
-                # final_cov = 0
-                # for line in cov_lines:
-                #     if "Initial coverage" in line:
-                #         init_cov = int(line.split(":")[-1].strip())
-                #     elif "Final coverage" in line:
-                #         final_cov = int(line.split(":")[-1].strip())
-                
-                # print(f"{project_path.name}/{function_path.name}: Initial coverage: {init_cov}, Final coverage: {final_cov}")
+    return run_list
+
+  
+
+def get_evaluation_results(eval_path: Path) -> tuple[float, float, float, float]:
+
+    eval_res: list[tuple[str, str, int, int]] = []
+    run_path_list = get_run_path(eval_path, n_run=1)
+    print(f"Found {len(run_path_list)} run1 directories.")
+    for run_dir in sorted(run_path_list):
+        cov_file = run_dir / "cov.txt"
+        if not cov_file.exists():
+            print(f"Coverage file not found: {cov_file}")
+            eval_res.append((run_dir.parent.parent.name, run_dir.parent.name, 0, 0))
+            continue
+
+        # check whether the fuzz crash 
+        log_file = run_dir / "agent.log"
+        assert log_file.exists(), f"Log file not found: {log_file}"
+
+        if "ValResult.Crash" in log_file.read_text():
+            # print(f"Fuzzer crashed during evaluation: {log_file}")
+            eval_res.append((run_dir.parent.parent.name, run_dir.parent.name, -1, -1))
+            continue
+
+        cov_lines = cov_file.read_text().split("\n")
+        init_cov = int(cov_lines[0].split(":")[-1].strip())
+        final_cov = int(cov_lines[1].split(":")[-1].strip())
+
+        eval_res.append((run_dir.parent.parent.name, run_dir.parent.name, init_cov, final_cov))
+
+    # do some statistics
+    # crashed count
+    crash_count = sum(1 for _, _, init_cov, final_cov in eval_res if init_cov == -1 and final_cov == -1)
+    # 1. init = 0, not reached
+    zero_init_count = sum(1 for _, _, init_cov, final_cov in eval_res if init_cov == 0 and final_cov == 0)
+    # 2. no improvement, init == final but init > 0
+    no_improve_count = sum(1 for _, _, init_cov, final_cov in eval_res if init_cov == final_cov and init_cov > 0)
+    # 3. improved
+    improved_count = sum(1 for _, _, init_cov, final_cov in eval_res if final_cov > init_cov)
+
+    print(f"Total evaluated functions: {len(eval_res)}")
+    print(f"Functions with crashes during evaluation: {crash_count / len(eval_res) * 100:.2f}% ({crash_count})")
+    print(f"Functions with not reached: {zero_init_count / len(eval_res) * 100:.2f}% ({zero_init_count})")
+    print(f"Functions with no improvement in coverage: {no_improve_count / len(eval_res) * 100:.2f}% ({no_improve_count})")
+    print(f"Functions with improved coverage: {improved_count / len(eval_res) * 100:.2f}% ({improved_count})")
+
+    # save to file
+    with open(eval_path / "evaluation_results.txt", "w") as f:
+        for project_name, function_name, init_cov, final_cov in eval_res:
+            f.write(f"{project_name}/{function_name}: Initial coverage: {init_cov}, Final coverage: {final_cov}\n")
+
+    return round(crash_count*100 / len(eval_res), 2), round(zero_init_count*100 / len(eval_res), 2), round(no_improve_count*100 / len(eval_res), 2), round(improved_count*100 / len(eval_res), 2)
 
 if __name__ == "__main__":
 
-    run_agent_res(Path("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/issta"), semantic_mode="eval", n_run=1)
+    # eval_res = get_run_res(Path("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/agent/mupdf/pdf_save_document/run3_qurmgvgmdbtazfza"), 
+                        #    semantic_mode="eval")
+    # print(f"Evaluation result: {eval_res}")
+    get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/agent"))
+    # get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/raw"))
+    # get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/raw"))
+    # run_agent_res(Path("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/agent"), semantic_mode="eval", n_run=3)
     # run_oss_fuzz_res()

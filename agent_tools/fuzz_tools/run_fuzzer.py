@@ -4,6 +4,7 @@ from agent_tools.fuzz_tools.log_parser import FuzzLogParser
 from constants import ValResult, LanguageType
 import time
 from pathlib import Path
+from typing import Any
 
 class FuzzerRunner():
 
@@ -19,7 +20,7 @@ class FuzzerRunner():
         
     def run_fuzzing(self, counter: int, fuzzer_name: str) -> tuple[ValResult, list[str], list[list[str]]]:
         
-        def kill_process(process):
+        def kill_process(process: Any):
             try:
                 if process and process.poll() is None:
                     process.kill()

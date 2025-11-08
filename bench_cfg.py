@@ -47,7 +47,9 @@ class BenchConfig:
         self.clear_msg_flag = self.config.get('clear_msg_flag', True)
         self.header_mode = self.config.get('header_mode', "agent")
         self.memory_flag = self.config.get('memory_flag', False)
-
+        self.definition_flag = self.config.get('definition_flag', False)
+        self.driver_flag = self.config.get('driver_flag', False)
+        self.compile_enhance = self.config.get('compile_enhance', False)
         # if True, only use semantic check for evaluation
         self.semantic_mode = self.config.get('semantic_mode', "both")
     def _load_config(self, config_path: str) -> dict[str, Any]:

@@ -9,7 +9,7 @@ from langgraph.graph import StateGraph, END, START  # type: ignore
 from constants import LanguageType, FuzzEntryFunctionMapping, Retriever, ValResult, CompileResults, PROJECT_PATH
 from langchain_core.tools import StructuredTool
 from langgraph.prebuilt import ToolNode # type: ignore
-from utils.misc import save_code_to_file, extract_name, load_prompt_template
+from utils.misc import save_code_to_file, extract_name, load_prompt_template, is_empty_json_file
 from harness_agent.modules.fuzzenv import FuzzENV
 from harness_agent.header.universal import HeaderCompilerWraper
 from harness_agent.fixing.raw import FixerPromptBuilder
@@ -214,31 +214,7 @@ class ISSTAFuzzer(FuzzENV):
 
         self.logger.info(f"Use {n_used+1} examples.")
         return final_example_str
-
-    def get_function_usage(self, function_name: str) -> str:
-        self.logger.info(f"Using {self.benchcfg.example_source} for example source")
-
-        if self.benchcfg.example_source == CodeSearchAPIName.Sourcegraph:
-            code_usages = search_public_usage(CodeSearchAPIName.Sourcegraph, function_name, self.project_name, self.project_lang, self.benchcfg)
-            example_json_file = self.benchcfg.cache_root / self.project_name / f"{function_name}_references_{CodeSearchAPIName.Sourcegraph.value}.json"
-        else:
-            code_usages = self.code_retriever.get_all_symbol_references(function_name, retriever=Retriever.Parser)
-            example_json_file = self.benchcfg.cache_root / self.project_name / f"{function_name}_references_parser.json"
-
-        if self.benchcfg.example_mode == "rank":
-            self.logger.info("Using rank mode for example selection")
-            code_usages = cache_example_selection(example_json_file, function_name, self.project_name, self.benchcfg.model_name)
-        
-        filter_code_usage = self.filter_examples(code_usages) # type: ignore
-
-        self.logger.info(f"Found {len(filter_code_usage)} usage in the project after removing harness.")
-        
-        function_usage = ""
-        if len(filter_code_usage) > 0:
-            function_usage = self.select_example(filter_code_usage)
-        return function_usage
-        
-
+   
     def select_example(self, example_list: list[dict[str, str]]) -> str:
 
         if self.benchcfg.n_examples == 0:
@@ -283,12 +259,40 @@ class ISSTAFuzzer(FuzzENV):
         
         return ""
 
+    def get_function_usage(self, function_name: str) -> str:
+        self.logger.info(f"Using {self.benchcfg.example_source} for example source")
+
+        if self.benchcfg.example_source == CodeSearchAPIName.Sourcegraph:
+            code_usages = search_public_usage(CodeSearchAPIName.Sourcegraph, function_name, self.project_name, self.project_lang, self.benchcfg)
+            example_json_file = self.benchcfg.cache_root / self.project_name / f"{function_name}_references_{CodeSearchAPIName.Sourcegraph.value}.json"
+        else:
+            code_usages = self.code_retriever.get_all_symbol_references(function_name, retriever=Retriever.Mixed)
+            example_json_file = self.benchcfg.cache_root / self.project_name / f"{function_name}_references_lsp.json"
+            # read from cache
+            if is_empty_json_file(example_json_file):
+                self.logger.info(f"No cached example usages found for {function_name}, use empty string")
+                example_json_file = self.benchcfg.cache_root / self.project_name / f"{function_name}_references_parser.json"
+
+
+        if self.benchcfg.example_mode == "rank":
+            self.logger.info("Using rank mode for example selection")
+            code_usages = cache_example_selection(example_json_file, function_name, self.project_name, self.benchcfg.model_name)
+        
+        filter_code_usage = self.filter_examples(code_usages) # type: ignore
+
+        self.logger.info(f"Found {len(filter_code_usage)} usage in the project after removing harness.")
+        
+        function_usage = ""
+        if len(filter_code_usage) > 0:
+            function_usage = self.select_example(filter_code_usage)
+        return function_usage
+        
     def build_init_prompt(self, prompt_template: str) -> str:
 
 
         # {function_name}
         # Remove the parameters by splitting at the first '('
-        function_name = extract_name(self.function_signature, keep_namespace=False)
+        function_name = extract_name(self.function_signature, keep_namespace=True, exception_flag=False)
         
         # {header_files}
         header_string = self.get_header(function_name)
@@ -298,10 +302,23 @@ class ISSTAFuzzer(FuzzENV):
 
         # TODO, no document
         # {function_document}
-        function_document = ""
-        # self.code_retriever.get_symbol_info("ALL", lsp_function=LSPFunction.AllSymbols, retriever=Retriever.LSP)
-        # self.code_retriever.get_symbol_info("ALL", lsp_function=LSPFunction.AllSymbols, retriever=Retriever.Parser)
-        prompt_template = prompt_template.format(header_files=header_string, function_usage=function_usage, function_document=function_document,
+        contexts = ""
+        if self.benchcfg.definition_flag:
+            contexts = "The Definition of this function is as below:\n"
+            contexts += self.code_retriever.get_symbol_definition(function_name)
+            contexts += "\n"
+
+        if self.benchcfg.driver_flag:
+            contexts += "The Driver example from the same project is as below:\n"
+            driver_list = self.code_retriever.get_all_driver_examples()
+            for _, driver_source in driver_list:
+                # only add unique driver examples
+                if function_name not in driver_source:
+                    contexts += driver_source + "\n"
+                    break 
+
+        # add other contexts
+        prompt_template = prompt_template.format(header_files=header_string, function_usage=function_usage, contexts=contexts,
                                              function_signature=self.function_signature, function_name=function_name, tool_prompt=self.tool_prompt)
 
         # comment the prompt template
@@ -317,7 +334,8 @@ class ISSTAFuzzer(FuzzENV):
         # print(messages)
         if last_message.content == CompileResults.Success.value:
             return self.FuzzerNode
-        elif last_message.content == CompileResults.CodeError.value:
+        elif last_message.content in [CompileResults.CodeError.value, CompileResults.LinkError.value, 
+                                      CompileResults.MissingHeaderError.value, CompileResults.IncludeError.value]:
             return self.FixBuilderNode
         else:
             return END
@@ -432,10 +450,23 @@ class ISSTAFuzzer(FuzzENV):
             description=self.code_retriever.get_symbol_references.__doc__,
         )
 
+        location_tool = StructuredTool.from_function(  # type: ignore
+            func=self.code_retriever.get_file_location_tool,
+            name="get_file_location_tool",
+            description=self.code_retriever.get_file_location_tool.__doc__,
+        )
+
+        # this tool should not be used for LLM4FDG benchmark since the functions are from the driver examples
+        driver_tool = StructuredTool.from_function(  # type: ignore
+            func=self.code_retriever.get_driver_example_tool,
+            name="get_driver_example_tool",
+            description=self.code_retriever.get_driver_example_tool.__doc__,
+        )
+
         # add tools
         tools = []
         if self.benchcfg.fixing_mode == "agent":
-            tools:list[StructuredTool] = [header_tool, definition_tool, declaration_tool, view_tool, struct_tool, reference_tool]
+            tools:list[StructuredTool] = [header_tool, definition_tool, declaration_tool, view_tool, location_tool, struct_tool, driver_tool, reference_tool]
         if self.benchcfg.header_mode == "agent" and self.benchcfg.fixing_mode != "agent":
             self.logger.info("Using agent mode for header files, add the header tool")
             tools:list[StructuredTool] = [header_tool]
@@ -495,7 +526,7 @@ class ISSTAFuzzer(FuzzENV):
                                             self.project_lang, self.harness_pairs, self.save_dir, self.benchcfg.cache_root, self.logger)
         else:
             compiler = CompilerWraper(self.benchcfg.oss_fuzz_dir, self.benchcfg.benchmark_dir, self.project_name, self.new_project_name, self.code_retriever, self.project_lang,
-                                       self.harness_pairs, self.save_dir, self.benchcfg.cache_root, self.logger)
+                                       self.harness_pairs, self.benchcfg.compile_enhance, self.save_dir, self.benchcfg.cache_root, self.logger)
         checker = SemaCheckNode(self.benchcfg.oss_fuzz_dir, self.benchcfg.benchmark_dir, self.project_name, self.new_project_name, self.function_signature, self.project_lang, self.benchcfg.semantic_mode, self.logger)
 
         # build the graph

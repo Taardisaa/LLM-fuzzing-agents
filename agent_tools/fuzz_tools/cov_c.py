@@ -20,8 +20,8 @@ def reply_corpus(fuzzer_name: str, corpus_path: str, timeout: int = 30) -> Optio
     process = None
     try:
         # Construct command with optional merge flag
-
-        cmd = [f"./{fuzzer_name}", "-runs=1", f"-timeout={timeout}"]
+        # -runs=0 means replay all inputs in corpus without additional fuzzing
+        cmd = [f"./{fuzzer_name}", "-runs=0", f"-timeout={timeout}"]
         cmd.append(corpus_path)
         
         # Run command and capture output

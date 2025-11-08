@@ -31,7 +31,7 @@ class HarnessEval(FuzzENV):
         compile_res = CompileResults.FuzzerError
         for fuzzer_name, harness_path in self.harness_pairs.items():
           
-            compile_res, _ = compiler.compile(harness_code=self.harness_code, harness_path=harness_path, fuzzer_name=fuzzer_name)
+            compile_res, _ = compiler.compile_harness(harness_code=self.harness_code, harness_path=harness_path, fuzzer_name=fuzzer_name)
             if compile_res != CompileResults.Success:
                 continue
 
@@ -72,7 +72,7 @@ def process_single_result(args: tuple[str, str, Path, BenchConfig]): # type: ign
     try:
         # get the evaluator
         evaluator = HarnessEval(benchcfg=benchcfg, function_signature=function_signature, project_name=project_name, local_harness=harness_file)
-        if evaluator.eailier_stop_flag:
+        if evaluator.early_exit_flag:
             return project_name, function_signature, 0, 0
         init_cov, final_cov, _ = evaluator.eval_harness()
 
@@ -102,7 +102,8 @@ def run_evaluation(output_path: Path, benchcfg:BenchConfig, n_run:int=1, num_pro
     # Prepare arguments for multiprocessing
     args_list: list[tuple[str, str, Path, BenchConfig]] = []
     for key, value in list(res_data.items()):
-        args_list.append((value.get("project"), key, Path(value.get("work_dir")), benchcfg))
+        _, func_sig = key.split("+")
+        args_list.append((value.get("project"), func_sig, Path(value.get("work_dir")), benchcfg))
 
     # Partition the args_list if needed
     if n_partitations > 1:
@@ -119,12 +120,12 @@ def run_evaluation(output_path: Path, benchcfg:BenchConfig, n_run:int=1, num_pro
     
     # Process results
     os.makedirs(benchcfg.save_root, exist_ok=True)
-    res_file = benchcfg.save_root / f"evaluation_{n_run}_{partitation_id}.txt"
+    # res_file = benchcfg.save_root / f"evaluation_{n_run}_{partitation_id}.txt"
     
-    with open(res_file, "w") as save_f:
-        for project_name, function_signature, init_cov, final_cov in results: # type: ignore
-            save_f.write(f"{project_name}/{extract_name(function_signature, keep_namespace=True, exception_flag=False)}. Initial coverage: {init_cov}, Final coverage: {final_cov}\n")
-
+    # with open(res_file, "w") as save_f:
+        # for project_name, function_signature, init_cov, final_cov in results: # type: ignore
+            # save_f.write(f"{project_name}/{extract_name(function_signature, keep_namespace=True, exception_flag=False)}. Initial coverage: {init_cov}, Final coverage: {final_cov}\n")
+# 
 
 if __name__ == "__main__":
 
@@ -133,7 +134,7 @@ if __name__ == "__main__":
     from argparse import ArgumentParser
 
     parser  = ArgumentParser(description="Run harness evaluation in parallel.")
-    parser.add_argument("--output_path", type=str, required=True, help="Path to the output directory containing success_functions.json")
+    parser.add_argument("--output_path", type=str, default="/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/agent", help="Path to the output directory containing success_functions.json")
     parser.add_argument("--benchcfg_path", type=str, default="/home/yk/code/LLM-reasoning-agents/cfg/eval_cfg.yaml", help="Path to the benchmark configuration YAML file")
     parser.add_argument("--n_run", type=int, default=3, help="Run number corresponding to success_functions_{n_run}.json")
     parser.add_argument("--num_processes", type=int, default=None, help="Number of parallel processes to use. Defaults to number of CPU cores minus one.")

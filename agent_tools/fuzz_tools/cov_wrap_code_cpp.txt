@@ -6,6 +6,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <dirent.h>
 
 // Explicitly declare time function for C++ compilation
 
@@ -48,19 +49,25 @@ void save_sancov_counters(void) {
         mkdir("./bitmaps", 0755);          // Create /out/bitmaps
     }
 
-    // --- (3) Generate a random filename (8 hex digits) ---
+    // --- (3) Count existing files in ./bitmaps to determine counter ---
+    unsigned int counter = 0;
+    DIR *dir = opendir("./bitmaps");
+    if (dir != NULL) {
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL) {
+            // Skip "." and ".." entries
+            if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+                counter++;
+            }
+        }
+        closedir(dir);
+    }
+    
+    // --- (4) Generate filename using counter ---
     char filename[64];
-    srand((unsigned int)time(NULL));  // Seed rand() once (optional but improves randomness)
+    snprintf(filename, sizeof(filename), "./bitmaps/%u.bin", counter);
     
-    snprintf(
-        filename, 
-        sizeof(filename), 
-        "./bitmaps/%lx_%04x.bin",  // Format: timestamp_rand.bin
-        (unsigned long)time(NULL), // Timestamp (seconds since epoch)
-        rand() & 0xFFFF            // Random 16-bit value
-    );
-    
-    // --- (4) Write data to file ---
+    // --- (5) Write data to file ---
     FILE *file = fopen(filename, "wb");
     if (!file) {
         perror("Failed to open file");

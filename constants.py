@@ -46,6 +46,9 @@ class CompileResults(Enum):
     CodeError = "Compile Error"
     FuzzerError = "No Fuzzer"
     ImageError = "Build Image Error"
+    LinkError = "Link Error"
+    IncludeError = "Include Error"
+    MissingHeaderError = "Missing Header Error"
 
 
 class ValResult(Enum):

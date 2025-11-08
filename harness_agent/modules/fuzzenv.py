@@ -11,13 +11,13 @@ from utils.oss_fuzz_utils import OSSFuzzUtils
 from utils.docker_utils import DockerUtils
 from pathlib import Path
 from bench_cfg import BenchConfig
-
+from utils import introspector_utils
 
 class FuzzENV():
 
     def __init__(self,  benchcfg: BenchConfig, function_signature: str, project_name: str, n_run: int):
         self.benchcfg = benchcfg
-        self.eailier_stop_flag = False
+        self.early_exit_flag = False
 
         self.project_name = project_name
         self.function_signature = function_signature
@@ -28,8 +28,8 @@ class FuzzENV():
         function_name = extract_name(function_signature, keep_namespace=True)
         function_name = function_name.replace("::", "_")  # replace namespace with underscore
 
-        if not self.create_workspace(function_name, n_run):
-            self.eailier_stop_flag = True
+        if self.exist_workspace(function_name, n_run):
+            self.early_exit_flag = True
             return
         self.save_dir = self.benchcfg.save_root / project_name.lower() / function_name.lower() / self.new_project_name
         self.logger = self.setup_logging()
@@ -41,18 +41,35 @@ class FuzzENV():
         self.init_workspace()
         self.code_retriever = CodeRetriever(self.benchcfg.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.benchcfg.usage_token_limit, self.benchcfg.cache_root, self.logger)
 
-        # collect all harness_path, fuzzer pairs
-        _fuzzer_name,  _harness_path = self.oss_tool.get_harness_and_fuzzer()
-        self.harness_pairs = self.cache_harness_fuzzer_pairs()
-        if  _fuzzer_name not in self.harness_pairs:
-            self.harness_pairs[_fuzzer_name] = _harness_path
-        else:
-            # move the harness file to the first
-            self.harness_pairs = {_fuzzer_name: _harness_path, **self.harness_pairs}
-        self.logger.info(f"Show harness_fuzzer_pairs.json, content:{self.harness_pairs}")
+        self.harness_pairs = self.get_all_harness_fuzzer_pairs(cache=False)
         self.code_retriever.set_harness_pairs(self.harness_pairs)
-        
-    def create_workspace(self, function_name: str, n_run: int) -> bool:
+
+    def merge_harness_pairs(self) -> dict[str, str]:
+         # collect all harness_path, fuzzer pairs
+        bench_fuzzer_name,  bench_harness_path = self.oss_tool.get_harness_and_fuzzer()
+        intro_harness_pairs = introspector_utils.get_harness_pairs(self.project_name)
+        our_harness_pairs = self.get_harness_pairs_name()
+
+        # dict has order since python 3.7
+        final_harness_pairs: dict[str, str] = {bench_fuzzer_name: str(bench_harness_path)}
+
+        for intro_fuzzer_name, intro_harness_path in intro_harness_pairs.items():
+            if intro_fuzzer_name not in final_harness_pairs:
+                final_harness_pairs[intro_fuzzer_name] = str(intro_harness_path)
+        for our_fuzzer_name, our_harness_path in our_harness_pairs.items():
+            if our_fuzzer_name not in final_harness_pairs:
+                final_harness_pairs[our_fuzzer_name] = str(our_harness_path)
+
+        return final_harness_pairs
+
+    def get_harness_pairs_name(self) -> dict[str, str]:
+        '''Get the harness and fuzzer pairs using name match'''
+
+        fuzzer_list = self.find_fuzzers()
+        harness_fuzzer_dict = self.find_harnesses(fuzzer_list)
+        return harness_fuzzer_dict
+
+    def exist_workspace(self, function_name: str, n_run: int) -> bool:
         '''Create the workspace for the project/function'''
 
         # skip existing project
@@ -61,9 +78,9 @@ class FuzzENV():
             for work_dir in function_dir.iterdir():
                 if work_dir.is_dir() and work_dir.name.startswith(f"run{n_run}_"):
                     print(f"Skip existing project: {work_dir}")
-                    return False
-        return True
-                
+                    return True
+        return False
+
     def setup_logging(self):
 
         # Create a logger
@@ -224,7 +241,7 @@ class FuzzENV():
 
         return harness_dict
 
-    def cache_harness_fuzzer_pairs(self)-> dict[str, Path]:
+    def get_all_harness_fuzzer_pairs(self, cache: bool = True) -> dict[str, Path]:
         '''Cache the harness and fuzzer pairs'''
 
         def to_path(harness_fuzzer_dict: dict[str, str]) -> dict[str, Path]:
@@ -235,23 +252,21 @@ class FuzzENV():
                 new_harness_fuzzer_dict[key] = Path(value)
             return new_harness_fuzzer_dict
         
-
         json_path = self.benchcfg.cache_root / self.project_name / "harness_fuzzer_pairs.json"
-        if json_path.exists():
+        if json_path.exists() and cache:
             with open(json_path, 'r') as f:
                 harness_fuzzer_dict = json.load(f)
             if harness_fuzzer_dict:
                 self.logger.info(f"Using Cached harness_fuzzer_pairs.json, content:{harness_fuzzer_dict}")
                 return to_path(harness_fuzzer_dict)
 
-        fuzzer_list = self.find_fuzzers()
-        harness_fuzzer_dict = self.find_harnesses(fuzzer_list)
-
+        final_harness_pairs = self.merge_harness_pairs()
         # save the harness pairs
         with open(json_path, 'w') as f:
-            json.dump(harness_fuzzer_dict, f)
+            json.dump(final_harness_pairs, f)
 
-        return to_path(harness_fuzzer_dict)
+        self.logger.info(f"Saved harness_fuzzer_pairs.json, content:{final_harness_pairs}")
+        return to_path(final_harness_pairs)
 
     def clean_workspace(self):
         '''Clean the workspace'''
