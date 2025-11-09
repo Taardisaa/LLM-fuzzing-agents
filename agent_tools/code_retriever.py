@@ -111,7 +111,8 @@ class CodeRetriever():
         if not harness_files:
             return ""
         selected_file = random.choice(harness_files)
-        return selected_file[1][:200]
+        driver_lines = selected_file[1].splitlines()[:200]
+        return "\n".join(driver_lines)
 
     def get_all_driver_examples(self) -> list[tuple[str, str]]:
         """
