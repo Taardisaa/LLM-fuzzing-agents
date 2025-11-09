@@ -31,7 +31,9 @@ class Runner:
 
             with open(res_file, "r") as f:
                 success_data = json.load(f)
-                all_success_sig.extend(success_data.keys())
+                for proj_func in success_data.keys():
+                    _, func = proj_func.split("+")
+                    all_success_sig.append(func)
 
         return all_success_sig
 
@@ -187,19 +189,14 @@ if __name__ == "__main__":
     # 
     cfg_list= [
        
-        # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_header_no.yaml",
-        #  "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_header_agent.yaml",
-        #  "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_header_oss_fuzz.yaml",
-        # "/home/yk/code/LLM-reasoning-agents/cfg/claude_code_info_oss_fuzz.yaml",
-        # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_example_public_rank.yaml",
-        # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/gpt5_mini_agent_wild.yaml",
-        # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/gpt5_mini_raw_wild.yaml",
-         "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/gpt5_mini_issta_wild.yaml",
-        # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_code_info_agent.yaml",
-        # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_code_info_oss_fuzz.yaml",
-        #   "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini_example_project_random.yaml",
-        # "/home/yk/code/LLM-reasoning-agents/cfg/deepseek_header_oss_fuzz.yaml"
-        # "/home/yk/code/LLM-reasoning-agents/cfg/wild_gpt41_code_info_agent.yaml"
+        #  "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic.yaml",
+        #  "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic+header.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic+header+driver.yaml",
+        "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic+header+example.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic+header+definition.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic+header+issta.yaml",
+        # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic+header+ossfuzz.yaml"
+        # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/gpt5_mini_agent_wild.yaml"
     ]
     for config_path in cfg_list:
         runner = Runner(config_path)
