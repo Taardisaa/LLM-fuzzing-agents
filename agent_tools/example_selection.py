@@ -18,13 +18,6 @@ class LLMSelector:
         self.name = "LLM"
         if model_name.startswith("gpt"):
             llm = ChatOpenAI(model=model_name)
-        elif model_name.startswith("anthropic"):
-            llm = ChatOpenAI(
-                model=model_name.split("/")[1].replace(".", "-"), # type: ignore
-                temperature=0,
-                api_key=os.getenv("ANTHROPIC_API_KEY", ""), # type: ignore
-                base_url="https://dfirdev.voidness.work"
-                ) # type: ignore
         else:
             llm = ChatOpenAI(
                 api_key=os.getenv("OPENROUTER_API_KEY", ""), # type: ignore

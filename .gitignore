@@ -168,4 +168,6 @@ benchmark-sets/
 cache/
 cache_all/
 test/
+paperdata/
+yunfiles/
 .gitignore

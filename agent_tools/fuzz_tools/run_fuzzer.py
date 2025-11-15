@@ -53,8 +53,10 @@ class FuzzerRunner():
         error_patterns = ['ERROR: LeakSanitizer',  'ERROR: libFuzzer:', 'ERROR: AddressSanitizer']
 
         process = None
+        start_time = time.time()
         try:
             # Run process and filter output
+            # in some rare cases, the libfuzzer donot stop after timeout
             process = sp.Popen(command,
                 stdout=sp.PIPE,
                 stderr=sp.STDOUT,
@@ -69,6 +71,12 @@ class FuzzerRunner():
                 crash_found = False
                 # Read line by line from binary output
                 for line_bytes in iter(process.stdout.readline, b''): # type: ignore
+                    # Check if we've exceeded the timeout
+                    if time.time() - start_time > self.run_timeout + 30:
+                        print(f"Timeout exceeded, killing fuzzer process...")
+                        kill_process(process)
+                        break
+                    
                     # Decode with error handling - replace invalid chars
                     line = line_bytes.decode('utf-8', errors='ignore')
                     # log_file.write(line)
@@ -90,7 +98,11 @@ class FuzzerRunner():
                             log_file.write(line)
                             log_file.flush()
                             
-            process.wait(timeout=self.run_timeout + 5)
+            # Give it a moment to finish gracefully
+            try:
+                process.wait(timeout=5)
+            except sp.TimeoutExpired:
+                kill_process(process)
 
             return FuzzLogParser(self.project_lang).parse_log(log_file_path)
             
