@@ -273,7 +273,7 @@ class ISSTAFuzzer(FuzzENV):
         parser_code_usages = self.code_retriever.get_all_symbol_references(function_name, retriever=Retriever.Parser)
         code_usages = lsp_code_usages + parser_code_usages
         # deduplicate the code usages based on source code
-        unique_sources = set()
+        unique_sources: set[str] = set()
         unique_code_usages: list[dict[str, str]] = []
         for usage in code_usages:
             if usage["source_code"] and usage["source_code"] not in unique_sources:

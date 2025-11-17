@@ -24,8 +24,6 @@ class BenchConfig:
             self.save_root = PROJECT_PATH /  self.save_root
 
         self.model_name = self.config.get('model_name', "gpt-4-0613")
-        self.base_url = self.config.get('base_url', "http://localhost")
-        self.ports = self.config.get('ports', [11434, 11435])
         self.reasoning = self.config.get('reasoning', False)
         self.temperature = self.config.get('temperature', 0.7)
         self.run_time = self.config.get('run_time', 1)

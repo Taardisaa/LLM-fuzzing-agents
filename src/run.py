@@ -113,11 +113,7 @@ class Runner:
                     # Check if the function has already been run
                     if self.has_run(function_signature, project_name, n_run):
                         continue
-                    port = self.config.ports[count % len(self.config.ports)]
-                    config_with_port = BenchConfig(self.cfg_path)
-                    # Update the base URL with the selected port
-                    config_with_port.base_url = f"{self.config.base_url}:{port}"
-                    pool.apply_async(Runner.run_one, args=(config_with_port, function_signature, project_name, n_run))
+                    pool.apply_async(Runner.run_one, args=(self.config, function_signature, project_name, n_run))
 
                     count += 1
 
