@@ -6,7 +6,7 @@ import shutil
 import json
 from utils.misc import extract_name
 from agent_tools.code_retriever import CodeRetriever
-from constants import ALL_FILE_EXTENSION, DockerResults, LanguageType
+from constants import ALL_FILE_EXTENSION, DockerResults
 from utils.oss_fuzz_utils import OSSFuzzUtils
 from utils.docker_utils import DockerUtils
 from pathlib import Path
@@ -25,7 +25,9 @@ class FuzzENV():
         # random generate a string for new project name
         random_str = ''.join(random.choices("abcdefghijklmnopqrstuvwxyz", k=16))
         self.new_project_name = f"run{n_run}_{random_str}"
-        function_name = extract_name(function_signature, keep_namespace=True)
+
+        # benchcfg language does not differentiate c and cpp
+        function_name = extract_name(function_signature, keep_namespace=True, language=self.benchcfg.language)
         function_name = function_name.replace("::", "_")  # replace namespace with underscore
 
         if self.exist_workspace(function_name, n_run):
@@ -35,6 +37,8 @@ class FuzzENV():
         self.logger = self.setup_logging()
 
         self.oss_tool = OSSFuzzUtils(self.benchcfg.oss_fuzz_dir, self.benchcfg.benchmark_dir, self.project_name, self.new_project_name)
+        
+        # project language differentiate c and cpp, 
         self.project_lang = self.oss_tool.get_project_language()
 
         self.docker_tool = DockerUtils(self.benchcfg.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang)
@@ -159,19 +163,16 @@ class FuzzENV():
             f.write(f'\nCOPY *.py  .\n')
 
             # wirte other commands
-            if self.project_lang in [LanguageType.C, LanguageType.CPP]:
-                # apt install clangd-18
-                f.write(f'\nRUN apt install -y clangd-18\n')
-                # apt install bear
-                f.write(f'\nRUN apt install -y bear\n')
-                f.write('RUN pip install "libclang==18.1.1"\n')
+            f.write(f'\nRUN apt install -y clangd-18\n')
+            # apt install bear
+            f.write(f'\nRUN apt install -y bear\n')
             # install python library
             f.write('RUN pip install "tree-sitter-c<=0.23.4"\n')
             f.write('RUN pip install "tree-sitter-cpp<=0.23.4"\n')
             f.write('RUN pip install "tree-sitter-java<=0.23.4"\n')
             f.write('RUN pip install "tree-sitter<=0.24.0"\n')
             f.write('RUN pip install "multilspy==0.0.15"\n')
-         
+            f.write('RUN pip install "libclang==18.1.1"\n')
 
     def find_fuzzers(self) -> list[str]:
         '''Find all fuzzers in the project directory'''

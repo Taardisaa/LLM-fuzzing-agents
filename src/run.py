@@ -5,11 +5,13 @@ import time
 import yaml
 from multiprocessing import Pool
 from utils.misc import extract_name, get_benchmark_functions
+from utils.oss_fuzz_utils import OSSFuzzUtils
 from harness_agent.main import ISSTAFuzzer
 from agent_tools.results_analysis import run_agent_res
 from bench_cfg import BenchConfig
 import traceback  # Add this at the top
 import json
+from constants import LanguageType
 
 class Runner:
     def __init__(self, cfg_path: str):
@@ -80,8 +82,8 @@ class Runner:
             agent_fuzzer.clean_workspace()
     
 
-    def has_run(self, function_signature: str, project_name: str, n_run: int) -> bool:
-        function_name = extract_name(function_signature, keep_namespace=True)
+    def has_run(self, function_signature: str, project_name: str, n_run: int, language: LanguageType) -> bool:
+        function_name = extract_name(function_signature, keep_namespace=True, language=language)
         function_name = function_name.replace("::", "_")  # replace namespace with underscore
         save_dir = self.config.save_root / project_name.lower() / function_name.lower() 
         
@@ -97,7 +99,8 @@ class Runner:
 
         return run_flag
 
-    def run_all(self, max_num_function: int, function_dict: dict[str, list[str]], n_run: int=1):
+    def run_all(self, max_num_function: int, function_dict: dict[str, list[str]],
+                 n_run: int=1, language: LanguageType=LanguageType.CPP):
         """Run the fuzzer on all functions in parallel."""
 
         with Pool(processes=self.config.num_processes) as pool:
@@ -109,9 +112,10 @@ class Runner:
                         continue
                     function_signature = function_dict[key][i]
                     project_name = key
-
+                    language = OSSFuzzUtils(ossfuzz_dir=self.config.oss_fuzz_dir, benchmark_dir=self.config.benchmark_dir, 
+                                            project_name=project_name, new_project_name=project_name).get_project_language()
                     # Check if the function has already been run
-                    if self.has_run(function_signature, project_name, n_run):
+                    if self.has_run(function_signature, project_name, n_run, language=language):
                         continue
                     pool.apply_async(Runner.run_one, args=(self.config, function_signature, project_name, n_run))
 
@@ -136,9 +140,9 @@ class Runner:
             yaml.dump(self.config, f)
         function_dicts = get_benchmark_functions(self.config.benchmark_dir,
                                                  allowed_projects=self.config.project_name if self.config.project_name else [],
-                                                 allowed_langs=["c++", "c"],
                                                  allowed_functions=self.config.function_signatures,
-                                                 funcs_per_project=self.config.funcs_per_project)
+                                                 funcs_per_project=self.config.funcs_per_project,
+                                                 language=self.config.language)
 
        
         start_time = time.time()
@@ -156,9 +160,9 @@ class Runner:
                 print("All functions are successful. Exiting...")
                 break
         
-            self.run_all(max_num_function, todo_function_dicts, n_run=i+1)
+            self.run_all(max_num_function, todo_function_dicts, n_run=i+1, language=self.config.language)
 
-            run_agent_res(self.config.save_root, semantic_mode="eval", n_run=i+1)
+            run_agent_res(self.config.save_root, semantic_mode="eval", n_run=i+1, language=self.config.language)
 
         print(f"Total time taken: {time.time()-start_time:.2f} seconds")
 
@@ -192,7 +196,7 @@ if __name__ == "__main__":
         # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic+header+definition.yaml",
         # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic+header+issta.yaml",
         # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic+header+ossfuzz.yaml"
-        "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/gpt5_mini_agent_wild.yaml"
+        "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/gpt5_mini_agent_java.yaml"
     ]
     for config_path in cfg_list:
         runner = Runner(config_path)

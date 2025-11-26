@@ -70,8 +70,52 @@ def _strip_templates(name: str) -> str:
             out.append(ch)                  # keep only when *not* inside <>
     return ''.join(out).replace(' ', '')    # also drop stray spaces
 
-def extract_name(function_signature: str, keep_namespace: bool=False, exception_flag: bool=True)-> str:
+def extract_java_name(function_signature: str, keep_namespace: bool=False) -> str:
+    """Extract class path, function name, and parameters from Java function signature.
+    
+    Args:
+        function_signature: Java function signature like:
+            [jakarta.mail.internet.InternetAddress].<init>(java.lang.String,boolean)
+            [org.jsoup.internal.StringUtil].join(java.util.Iterator<?>,java.lang.String)
+            [org.jsoup.helper.W3CDom$W3CBuilder].head(org.jsoup.nodes.Node,int)
+    
+    Returns:
+        tuple[str, str, str]: (class_path, function_name, params)
+            e.g., ("jakarta.mail.internet.InternetAddress", "<init>", "java.lang.String,boolean")
+            e.g., ("org.jsoup.helper.W3CDom$W3CBuilder", "head", "org.jsoup.nodes.Node,int")
+    """
+    pattern = r'\[([^\]]+)\]\.([^(]+)\(([^)]*)\)'
+    
+    match = re.match(pattern, function_signature.strip())
+    
+    if not match:
+        print(f"Java function signature '{function_signature}' does not match expected format")
+        return ""
+    
+    class_path = match.group(1)
+    function_name = match.group(2)
+    # params = match.group(3)
+    if function_name == "<init>":
+        function_name = class_path.split(".")[-1]
 
+    if keep_namespace:
+        return f"{class_path}.{function_name}"
+    return function_name
+
+def extract_name(function_signature: str, keep_namespace: bool=False, 
+                 exception_flag: bool=True, language: LanguageType=LanguageType.CPP)-> str:
+    """Extract the function name from the function signature using tree-sitter.
+    Args:
+        function_signature (str): The function signature.
+        keep_namespace (bool): Whether to keep the namespace in the function name.
+        exception_flag (bool): Whether to raise an exception if the function name cannot be extracted.
+    Returns:
+        str: The extracted function name.
+    """
+
+    if language == LanguageType.JAVA:
+        return extract_java_name(function_signature, keep_namespace=keep_namespace)
+    
     if  "N/A" in function_signature:
         return "N/A"
     lang = Language(tree_sitter_cpp.language())
@@ -277,14 +321,15 @@ def project_statistics():
 
 
 def get_benchmark_functions(bench_dir: Path, allowed_projects:list[str] = [], 
-                            allowed_langs: list[str]=[], allowed_functions: list[str] = [], funcs_per_project: int=1) -> dict[str, list[str]]:
+                            allowed_functions: list[str] = [], funcs_per_project: int=1,
+                            language: LanguageType=LanguageType.CPP) -> dict[str, list[str]]:
     """Get all functions from the benchmark directory."""
 
     allowed_names: list[str] = []
     # not None or empty
     if allowed_functions:
         for function_signature in allowed_functions:
-            function_name = extract_name(function_signature, keep_namespace=True)
+            function_name = extract_name(function_signature, keep_namespace=True, language=language)
             allowed_names.append(function_name)
         
     function_dict: dict[str, list[str]] = {}
@@ -297,13 +342,9 @@ def get_benchmark_functions(bench_dir: Path, allowed_projects:list[str] = [],
         with open(os.path.join(bench_dir, file), 'r') as f:
             data = yaml.safe_load(f)
             project_name = data.get("project")
-            lang_name = data.get("language")
 
             # only allow specific projects
             if allowed_projects and project_name not in allowed_projects:
-                continue
-        
-            if allowed_langs and lang_name not in allowed_langs:
                 continue
         
             count = 0
@@ -313,7 +354,7 @@ def get_benchmark_functions(bench_dir: Path, allowed_projects:list[str] = [],
                     print(f"Function signature not found in {project_name} {function['name']}")
                     continue
                 function_signature = function["signature"]
-                function_name = extract_name(function_signature, keep_namespace=True)
+                function_name = extract_name(function_signature, keep_namespace=True, language=language)
                 
                 # screen the function name
                 if len(allowed_names) > 0 and function_name not in allowed_names:

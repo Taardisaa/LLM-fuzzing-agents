@@ -3,7 +3,7 @@ import os
 import urllib
 from agent_tools.code_tools.lsp_clients.clspclient_raw import ClangdLspClient
 from constants import LanguageType, LSPFunction
-from typing import Any, Optional
+from typing import Any
 from pathlib import Path
 from dataclasses import asdict
 from agent_tools.code_tools.lsp_clients.extract_functions_clang import LibclangExtractor
@@ -101,8 +101,7 @@ class CLSPCLient():
         
         return min(len(name_space_list), len(container_ns))
 
-    async def get_workspace_symbols(self, symbol: str="") -> list[tuple[str, int, int]]:
-        import asyncio
+    async def get_workspace_symbol(self, symbol: str="") -> list[tuple[str, int, int]]:
         
         client = ClangdLspClient(self.project_root, self.project_lang.value.lower())
         await client.start_server()
@@ -143,7 +142,7 @@ class CLSPCLient():
             print("No workspace symbols found")
             return []
 
-    async def request_workspace_symbols(self, symbol: str="") -> list[tuple[str, int, int]]:
+    async def request_workspace_symbol(self, symbol: str="") -> list[tuple[str, int, int, int]]:
      
         # if symbol includes namespace, we need to remove it
         name_space_list = []
@@ -159,7 +158,7 @@ class CLSPCLient():
         response = None
         
         for attempt in range(max_retries):
-            response = await self.get_workspace_symbols(symbol)
+            response = await self.get_workspace_symbol(symbol)
             if response:
                 break
             # If no results and not the last attempt, wait before retrying
@@ -201,8 +200,9 @@ class CLSPCLient():
             all_location.append((file_path, location['range']['start']['line'], location['range']['start']['character'], ns_length))
         
         # remove the symbols that the namespace length is less than the longest namespace matching
+        # the end line is not used for c/c++, so we just set it to start_line + 1
         ret_location = [
-            (file_path, line, charpos) for file_path, line, charpos, ns_length in all_location if ns_length >= longest_ns_len
+            (file_path, line, line+1, charpos) for file_path, line, charpos, ns_length in all_location if ns_length >= longest_ns_len
         ]
         return ret_location
 

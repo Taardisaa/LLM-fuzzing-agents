@@ -79,7 +79,7 @@ class CompileErrorExtractor():
 
     def extract_error_message(self, error_msg: str) -> list[str]:
         '''Extract the error message from the error message'''
-        if self.project_lang in [LanguageType.CPP, LanguageType.C]:
+        if self.project_lang in [LanguageType.CPP, LanguageType.C, LanguageType.JAVA]:
             return self.extract_error_message_cpp(error_msg)
         else:
             raise ValueError(f"Unsupported language: {self.project_lang}")

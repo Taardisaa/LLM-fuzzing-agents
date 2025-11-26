@@ -1,12 +1,13 @@
 from constants import LanguageType, LSPFunction
-from agent_tools.code_tools.parsers.base_parser import BaseParser
-from agent_tools.code_tools.parsers.c_parser import common_query_dict
+from agent_tools.code_tools.parsers.base_parser import FunctionDeclaration
+from agent_tools.code_tools.parsers.c_parser import CParser
+from agent_tools.code_tools.parsers.c_parser import common_query_dict, c_func_queries
 from pathlib import Path
 from typing import Optional
 import re
 # TODO no consider template yet
 
-def_query_dict = {
+cpp_def_queries = {
     "classes": """
         (class_specifier
             name: (type_identifier) @identifier_name
@@ -43,7 +44,7 @@ def_query_dict = {
 
         }
 
-decl_query_dict = {
+cpp_decl_queries = {
     "classes": """
         (class_specifier
             name: (type_identifier) @identifier_name
@@ -89,26 +90,17 @@ decl_query_dict = {
     """
 }
 
-
-func_declaration_query_dict = {
-  "declaration": """(declaration
-                    declarator: (function_declarator
-                    declarator: (identifier) @identifier_name
-                    )) @node_name""",
-                    
-    "pointer_declaration": """(declaration
-                    declarator: (pointer_declarator
-                    declarator: (function_declarator
-                    declarator: (identifier) @identifier_name
-                    ))) @node_name""",
-
-    "macro_func": """(preproc_function_def
-                    name: (identifier) @identifier_name
-                    ) @node_name""",
+cpp_func_queries = {
+    "cpp_functions": """
+       (function_declarator
+                (field_identifier) @identifier_name
+                (parameter_list) @params
+            )@node_name""",
 }
 
-decl_query_dict.update(common_query_dict)
-def_query_dict.update(common_query_dict)
+cpp_func_queries.update(c_func_queries)
+cpp_decl_queries.update(common_query_dict)
+cpp_def_queries.update(common_query_dict)
 
 from tree_sitter import Node
 def node_text(node: Optional[Node]) -> str:
@@ -116,7 +108,7 @@ def node_text(node: Optional[Node]) -> str:
         return ""
     return node.text.decode('utf-8', errors='replace')  # type: ignore
 
-class CPPParser(BaseParser):
+class CPPParser(CParser):
     def __init__(self, file_path: Optional[Path], source_code: Optional[str] = None):
 
         # preprocess the file path
@@ -125,7 +117,7 @@ class CPPParser(BaseParser):
         pattern = r'(\bclass\s+)([A-Z_][A-Z0-9_]*\s+)'  # matches uppercase-style macro
         # Replace the macro with an empty string
         cleaned_code = re.sub(pattern, r'\1', cleaned_code) 
-        super().__init__(None, cleaned_code, decl_query_dict, def_query_dict, func_declaration_query_dict, LanguageType.CPP)
+        super().__init__(file_path, cleaned_code, cpp_decl_queries, cpp_def_queries, cpp_func_queries, LanguageType.CPP)
    
     def get_symbol_source(self, symbol_name: str, line: int, lsp_function: LSPFunction) -> tuple[str, str, int]:
         """
@@ -164,7 +156,7 @@ class CPPParser(BaseParser):
 
             # check if the src_node is the correct node filter this kind of line.  class LoggingEvent;
             if key == "classes":
-                field_node = self.match_child_node(src_node, ["field_declaration_list"], recusive_flag=False)
+                field_node = self.get_child_node(src_node, ["field_declaration_list"], recusive_flag=False)
                 if not field_node:
                     continue
                 
@@ -176,9 +168,9 @@ class CPPParser(BaseParser):
             if lsp_function == LSPFunction.Definition:
                 
                 # situation 1: the namespace is before the function like: void A::test()
-                name_node = self.match_child_node(src_node, ["namespace_identifier"], recusive_flag=True)
+                name_node = self.get_child_node(src_node, ["namespace_identifier"], recusive_flag=True)
                 if not name_node:
-                    name_node = self.match_child_node(src_node, ["type_identifier"], recusive_flag=True)
+                    name_node = self.get_child_node(src_node, ["type_identifier"], recusive_flag=True)
 
                 # if exist the namespace node, then match the namespace
                 if name_node:
@@ -199,7 +191,7 @@ class CPPParser(BaseParser):
                 # match the namespace
                 if parent_node and parent_node.type in ["class_specifier","struct_specifier","union_specifier", "enum_specifier"]:
                     # there may be more identifier other than type_identifier 
-                    name_node = self.match_child_node(parent_node, ["type_identifier"], recusive_flag=True)
+                    name_node = self.get_child_node(parent_node, ["type_identifier"], recusive_flag=True)
                     # exist namespace node, then match the namespace
                     if name_node:
                         if node_text(name_node) == namespace_name: 
@@ -213,6 +205,47 @@ class CPPParser(BaseParser):
             
         return "", "", 0
     
+    def get_decl_funcs(self, node: Node, file_path: Path) -> Optional[FunctionDeclaration]:
+   
+        # Get parameter list
+        function_name = node.text.decode('utf-8') # type: ignore
+        signature = function_name
+        decl_node = self.get_parent_node(node, "declaration")
+        function_type = "function"
+        if not decl_node:
+            decl_node = self.get_parent_node(node, "field_declaration")
+            function_type = "class_method"
+        
+        # may be definition 
+        if not decl_node:
+            return None
+        
+        signature = decl_node.text.decode('utf-8') # type: ignore
+
+        # Get line number
+        line_number = node.start_point[0] + 1
+        # Create function declaration object
+        func_decl = FunctionDeclaration(
+            name=function_name,
+            signature=signature,
+            file_path=str(file_path),
+            line_number=line_number,
+            function_type=function_type
+        )
+       
+        if not func_decl or func_decl.function_type == "function":
+            return func_decl
+
+        # Try to get the class name for class method
+        class_node = self.get_parent_node(node, "class_specifier")
+        if class_node:
+            # find class name
+            name_node = self.get_child_node(class_node, ["type_identifier"], recusive_flag=False)
+            if name_node:
+                namespace = node_text(name_node)
+                func_decl.namespace = namespace
+        
+        return func_decl
 
 # Example usage
 if __name__ == "__main__":
@@ -223,6 +256,11 @@ if __name__ == "__main__":
     # IGRAPH_EXPORT igraph_error_t igraph_read_graph_pajek(igraph_t *graph, FILE *instream);
     # TODO CPP is better for the above function, we should try to use CPP if C is not working
     extractor = CPPParser(file_path)
-    extracted_code = extractor.get_symbol_source("WriterAppender::subAppend", 71, LSPFunction.Definition)
-    print("Function source code:")
+    extracted_code = extractor.get_symbol_source("WriterAppender::subAppend", 41, LSPFunction.Definition)
     print(extracted_code)
+
+    res = extractor.get_file_functions()
+    # sort by line number
+    res.sort(key=lambda x: x.line_number)
+    for func_info in res:
+        print(f"Function info: {func_info.to_dict()}")

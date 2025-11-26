@@ -4,7 +4,7 @@ import tree_sitter_cpp  # For C++ language
 import tree_sitter_java  # For Java language
 from constants import LanguageType, FuzzEntryFunctionMapping, LSPFunction
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 parser_language_mapping = {
     LanguageType.C: tree_sitter_c.language(),
@@ -12,15 +12,39 @@ parser_language_mapping = {
     LanguageType.JAVA: tree_sitter_java.language(),
 }
 
+class FunctionDeclaration:
+    """Function declaration information"""
+    def __init__(self, name: str, signature: str, file_path: str, line_number: int, 
+                 function_type: str = "function", namespace: str = ""):
+        self.name = name
+        self.signature = signature
+        self.file_path = file_path
+        self.line_number = line_number
+        self.function_type = function_type
+        self.namespace = namespace
+        self.full_name = f"{namespace}::{signature}" if namespace else signature
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert function declaration to dictionary for JSON serialization"""
+        return {
+            "name": self.name,
+            "signature": self.signature,
+            "file_path": self.file_path,
+            "line_number": self.line_number,
+            "namespace": self.namespace,
+            "function_type": self.function_type,
+        }
+    
+
 class BaseParser:
     def __init__(self, file_path: Optional[Path], source_code: Optional[str] = None,
                  decl_query_dict: dict[str, str] = {}, def_query_dict: dict[str, str] = {}, 
-                 func_declaration_query_dict: dict[str, str] = {},
+                 func_query_dict: dict[str, str] = {},
                  project_lang: LanguageType = LanguageType.CPP):
         
         self.decl_query_dict = decl_query_dict
         self.def_query_dict = def_query_dict
-        self.func_declaration_query_dict = func_declaration_query_dict
+        self.func_query_dict = func_query_dict
         self.file_path = file_path
         self.project_lang = project_lang
         self.parser_language = self.set_language(project_lang)
@@ -57,20 +81,19 @@ class BaseParser:
         return call_name_dict[self.project_lang], func_def_name_dict[self.project_lang]
 
     def exec_query(self, query: Query, query_node: Node, line: int, node_name:str="node_name") -> Optional[Node]:
-            
-            # Execute the query
-            captures = query.captures(query_node)
-            if not captures:
-                return None
-            
-            for source_node in captures[node_name]:
-            
-                # TODO will this find the definition that calls the function?
-                if not source_node.text:
-                    continue
-                if source_node.start_point.row <= line and line <= source_node.end_point.row:  
-                    return source_node
+        # Execute the query
+        captures = query.captures(query_node)
+        if not captures:
             return None
+        
+        for source_node in captures[node_name]:
+        
+            # TODO will this find the definition that calls the function?
+            if not source_node.text:
+                continue
+            if source_node.start_point.row <= line and line <= source_node.end_point.row:  
+                return source_node
+        return None
     
     def get_symbol_source(self, symbol_name: str, line: int, lsp_function: LSPFunction) -> tuple[str, str, int]:
         """
@@ -103,32 +126,40 @@ class BaseParser:
         return "", "", 0
     
 
-    def get_file_functions(self) -> list[tuple[str, str]]:
-        ret_list: list[tuple[str, str]] = []
-        for _, query in self.func_declaration_query_dict.items():
-            # Execute the query
-            query = self.parser_language.query(query)
-            captures = query.captures(self.tree.root_node)
-            if not captures:
-                continue
+    # def get_file_functions(self) -> list[tuple[str, str]]:
+    #     ret_list: list[tuple[str, str]] = []
+    #     for _, query in self.func_declaration_query_dict.items():
+    #         # Execute the query
+    #         query = self.parser_language.query(query)
+    #         captures = query.captures(self.tree.root_node)
+    #         if not captures:
+    #             continue
 
-            for source_node in captures["node_name"]:
-                # if we can't decode the text, it is meaningless to search
-                if not source_node.text:
-                    continue
+    #         for source_node in captures["node_name"]:
+    #             # if we can't decode the text, it is meaningless to search
+    #             if not source_node.text:
+    #                 continue
 
-                id_node = self.match_child_node(source_node, ["identifier", "field_identifier"], recusive_flag=True)
-                # the function name is under function_declarator
-                if not id_node or not id_node.text: 
-                    continue
-                function_name = id_node.text.decode("utf-8", errors="ignore")
-                # Decode the source code to a string
-                src_code = source_node.text.decode("utf-8", errors="ignore")
-                # function declaration must include (
-                if src_code:
-                    ret_list.append((src_code, function_name))
+    #             id_node = self.match_child_node(source_node, ["identifier", "field_identifier"], recusive_flag=True)
+    #             # the function name is under function_declarator
+    #             if not id_node or not id_node.text: 
+    #                 continue
+    #             function_name = id_node.text.decode("utf-8", errors="ignore")
+    #             # Decode the source code to a string
+    #             src_code = source_node.text.decode("utf-8", errors="ignore")
+    #             # function declaration must include (
+    #             if src_code:
+    #                 ret_list.append((src_code, function_name))
         
-        return ret_list
+    #     return ret_list
+    def get_identifier_node(self, root_node:Node, symbol_name: str) -> Optional[Node]:
+        raise NotImplementedError("This method should be implemented in subclasses.")
+    def get_identifier_name_under_call(self, root_node:Node) -> str:
+        raise NotImplementedError("This method should be implemented in subclasses.")
+    def get_definition_node(self, function_name: str) -> Optional[Node]:
+        raise NotImplementedError("This method should be implemented in subclasses.")
+    def get_decl_funcs(self, node: Node, file_path: Path) -> Optional[FunctionDeclaration]:
+        raise NotImplementedError("This method should be implemented in subclasses.")
     
     def get_ref_source(self, symbol_name: str, line: int) -> str:
 
@@ -167,56 +198,6 @@ class BaseParser:
 
         # find the upper node of the callee node, which is reference node
 
-    def match_namespace(self, ns1: list[str], ns2: list[str]) -> bool:
-        """
-        Match two namespace lists.They don't have to be exactly the same, but one should be the suffix of the other.
-        :param ns1: The first namespace list.
-        :param ns2: The second namespace list.
-        """
-        for na, nb in zip(reversed(ns1), reversed(ns2)):
-            if na != nb:
-                return False
-        return True
-
-    def get_identifier_node(self, root_node:Node, symbol_name: str) -> Optional[Node]:
-       
-         # remove the namespace
-        if "::" in symbol_name:
-            pure_symbol_name = symbol_name.split("::")[-1]
-        else:
-            pure_symbol_name = symbol_name
-
-        try:
-            # TODO C/C++ function name is the first child of the call expression
-            for identifier_str in ["identifier", "field_identifier"]:
-                id_node = self.match_child_node(root_node, [identifier_str], recusive_flag=True)
-                
-                # match the function name
-                if id_node and id_node.text and pure_symbol_name == id_node.text.decode("utf-8", errors="ignore"): # type: ignore
-                    
-                    # if the function name matches, check the namespace if any
-                    call_str = root_node.text.decode("utf-8", errors="ignore") # type: ignore
-                    call_prefix = call_str.split(pure_symbol_name)[0]
-                    call_prefix = call_prefix.strip()
-                    if call_prefix.endswith("::"):
-                        # split the name space, the last element is empty
-                        namespace = call_prefix.split("::")[:-1]
-                        if self.match_namespace(namespace, symbol_name.split("::")[:-1]):
-                            return id_node
-                    else:
-                        return id_node
-        except Exception:
-            pass
-        
-        return None
-    
-    def get_identifier_name(self, root_node:Node) -> str:
-
-        # TODO C/C++ function name is the first child of the call expression
-        id_node = self.match_child_node(root_node, ["identifier", "field_identifier"], recusive_flag=True)
-        if id_node:
-            return id_node.text.decode("utf-8", errors="ignore") # type: ignore
-        return ""
 
     def get_call_node(self, function_name: str, entry_node: Optional[Node] = None) -> Optional[Node]:
         if not entry_node:
@@ -236,28 +217,6 @@ class BaseParser:
             id_node = self.get_identifier_node(node, function_name)
             if id_node:
                 return node
-        return None
-    
-    def get_definition_node(self, function_name: str) -> Optional[Node]:
-        # TODO this only test on C/C++ language
-        
-        # Define a query to find "function_definition" nodes
-        function_definition_query = self.parser_language.query(f"({self.func_def_name}) @func_def")
-
-        # Execute the query
-        captures = function_definition_query.captures(self.tree.root_node)
-        if not captures:
-            return None
-        # Check the nodes
-        for node in captures["func_def"]:
-            
-            decl_node = self.match_child_node(node, ["function_declarator"], recusive_flag=True)
-            if not decl_node:
-                continue
-            id_node = self.get_identifier_node(decl_node, function_name)
-            if id_node:
-                return node
-        
         return None
        
     def get_fuzz_function_node(self, function_name: str, expression_flag: bool = False) -> Optional[Node]:
@@ -287,50 +246,19 @@ class BaseParser:
         return None
 
 
-    def get_parent_definition_node(self, call_node:Node) -> Optional[Node]:
+    def get_parent_node(self, call_node:Node, type_name: str) -> Optional[Node]:
         
         # get the parent definition node of the call node
         while call_node.parent:
             call_node = call_node.parent
-            if call_node.type == self.func_def_name:
+            if call_node.type == type_name:
                 return call_node
             # the top node
             if call_node.type == "translation_unit":
                 break
         return None
     
-    def is_fuzz_function_called(self, function_name: str) -> bool:
-
-        # this prevents infinite loop
-        visited_nodes: list[str] = []
-        def_node_name = function_name
-        while def_node_name != FuzzEntryFunctionMapping[self.project_lang]:
-            call_node = self.get_call_node(def_node_name, self.tree.root_node)
-            # check if the call node is under the main function
-            if not call_node:
-                return False
-            
-            # no definition node found
-            def_node = self.get_parent_definition_node(call_node)
-            if not def_node:
-                return False
-
-            # no identifier name found
-            def_node_name = self.get_identifier_name(def_node)
-            if not def_node_name:
-                return False
-            if def_node_name in visited_nodes:
-                return False
-            visited_nodes.append(def_node_name)
-
-        return True
-    
-    def exist_function_definition(self, function_name: str) -> bool:
-        if self.get_definition_node(function_name):
-            return True
-        return False
-
-    def match_child_node(self, node:Node, node_type:list[str], recusive_flag: bool=False) -> Optional[Node]:
+    def get_child_node(self, node:Node, node_type:list[str], recusive_flag: bool=False) -> Optional[Node]:
         """
         Match the fisrt child node of a given node based on the node type.
         :param node: The parent node to search within.
@@ -342,7 +270,66 @@ class BaseParser:
             if child.type in node_type:
                 return child
             if recusive_flag and child.type != "ERROR":
-                result = self.match_child_node(child, node_type, recusive_flag)
+                result = self.get_child_node(child, node_type, recusive_flag)
                 if result:
                     return result
         return None 
+    
+    def is_function_called(self, function_name: str) -> bool:
+
+        # this prevents infinite loop
+        visited_nodes: list[str] = []
+        def_node_name = function_name
+        while def_node_name != FuzzEntryFunctionMapping[self.project_lang]:
+            call_node = self.get_call_node(def_node_name, self.tree.root_node)
+            # check if the call node is under the main function
+            if not call_node:
+                return False
+            
+            # no definition node found
+            def_node = self.get_parent_node(call_node, self.func_def_name)
+            if not def_node:
+                return False
+
+            # no identifier name found
+            def_node_name = self.get_identifier_name_under_call(def_node)
+            if not def_node_name:
+                return False
+            if def_node_name in visited_nodes:
+                return False
+            visited_nodes.append(def_node_name)
+
+        return True
+    
+    def is_function_defined(self, function_name: str) -> bool:
+        if self.get_definition_node(function_name):
+            return True
+        return False
+
+    
+    def get_file_functions(self) -> list[FunctionDeclaration]:
+        """Extract function declarations from a single file"""
+        
+        functions: list[FunctionDeclaration] = []
+        # Use simplified query to extract functions
+
+        for _, query_str in self.func_query_dict.items():
+            # Execute the query
+            query = self.parser_language.query(query_str)
+            captures = query.captures(self.tree.root_node)
+            
+            # Check if there are captures
+            if not captures:
+                return functions
+                
+            # Extract function names from captures
+            for node in captures["identifier_name"]:
+              
+                # TODO treat cpp method as function for now
+                func_decl = self.get_decl_funcs(node, self.file_path) # type: ignore
+                if func_decl:
+                    functions.append(func_decl)
+        
+        return functions
+            
+    

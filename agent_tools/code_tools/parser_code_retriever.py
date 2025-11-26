@@ -6,11 +6,10 @@ import random
 from agent_tools.code_tools.parsers.cpp_parser import CPPParser
 from agent_tools.code_tools.parsers.c_parser import CParser
 from agent_tools.code_tools.parsers.java_parser import JavaParser
+from agent_tools.code_tools.parsers.base_parser import FunctionDeclaration
 from constants import LanguageType, LSPFunction, LSPResults
 from pathlib import Path
 from typing import Any
-from agent_tools.code_tools.parsers.extract_function_parser import HeaderFunctionExtractor
-
 
 class ParserCodeRetriever():
     def __init__(self, project_name: str, workdir: str,  project_lang: LanguageType, symbol_name: str, lsp_function: LSPFunction, max_try: int = 100):
@@ -56,7 +55,7 @@ class ParserCodeRetriever():
             query_key, source_code, start_line = parser.get_symbol_source(self.symbol_name, lineno, self.lsp_function)
 
         if source_code:
-            ret_list.append({"source_code": source_code, "file_path": file_path, "line": lineno, "type": query_key, "start_line": start_line})
+            ret_list.append({"source_code": source_code, "file_path": file_path, "type": query_key, "start_line": start_line})
 
         return ret_list
 
@@ -78,7 +77,7 @@ class ParserCodeRetriever():
             
         # Execute `find` command to recursively list files and directories
         if self.lsp_function == LSPFunction.References:
-            cmd = f"grep --binary-files=without-match -rn /src -e  '{pure_symbol_name}('"
+            cmd = f"grep --binary-files=without-match -rnw /src -e  '{pure_symbol_name}('"
         else:
             cmd = f"grep --binary-files=without-match -rnw /src -e  {pure_symbol_name}"
         # suppress the error output
@@ -146,7 +145,7 @@ class ParserCodeRetriever():
         
         return LSPResults.Success.value, final_resp
     
-    def get_file_functions(self, file_path: str) -> tuple[str, list[dict[str, Any]]]:
+    def get_struct_functions(self, file_path: str) -> tuple[str, list[dict[str, Any]]]:
 
         # 
         path_list: list[Path] =  []
@@ -180,7 +179,9 @@ class ParserCodeRetriever():
         res_list: list[tuple[str, str]] = []
         for _path in path_list:
             parser = self.lang_parser(Path(_path), source_code=None)
-            res_list += parser.get_file_functions() # type: ignore
+            func_decl_list = parser.get_file_functions() 
+            for func_info in func_decl_list:
+                res_list.append((func_info.signature, func_info.name))
 
         ret_list: list[dict[str, Any]] = []
          # if the lsp function is related functions, we need to sort the results according to the time it appears in the file
@@ -220,7 +221,7 @@ class ParserCodeRetriever():
             tuple: A tuple containing a message and a list of dictionaries with symbol information.
         """
         if self.lsp_function == LSPFunction.StructFunctions:
-            return self.get_file_functions(self.symbol_name)
+            return self.get_struct_functions(self.symbol_name)
         elif self.lsp_function == LSPFunction.AllSymbols:
             function_list = self.get_all_functions()
             if function_list:
@@ -231,17 +232,69 @@ class ParserCodeRetriever():
             msg, res_list =  self.get_symbol_info_helper()
             return msg, res_list
 
+    def get_header_files(self) -> list[Path]:
+        """Find all header files"""
+        header_files: list[Path] = []
+        # Include all supported file types if no specific language is specified
+        patterns = ["**/*.h", "**/*.hpp", "**/*.hh", "**/*.hxx", "**/*.c", "**/*.cpp",
+                     "**/*.cc", "**/*.cxx", "**/*.c++", "**/*.java", "**/*.py"]
+
+        # Find header files in project root
+        project_root = Path(self.project_root)
+        if project_root.exists():
+            for pattern in patterns:
+                # exclude third_party
+                for file in project_root.glob(pattern):
+                    if "third_party" in str(file):
+                        continue
+                    header_files.append(file)
+
+        return sorted(list(set(header_files)))
+    
+
+    def extract_all_functions(self) -> dict[str, list[FunctionDeclaration]]:
+        """Extract function declarations from all header files"""
+        header_files = self.get_header_files()
+        print(f"Found {len(header_files)} header files")
+        
+        all_functions: dict[str, list[FunctionDeclaration]] = {}
+        
+     
+        for file_path in header_files:
+        
+            parser = self.lang_parser(Path(file_path), source_code=None)
+            functions = parser.get_file_functions()
+            if functions:
+                all_functions[str(file_path)] = functions
+        
+        return all_functions
+    
+    def deduplicate_functions(self, all_functions: dict[str, list[FunctionDeclaration]]) -> dict[str, FunctionDeclaration]:
+        """Deduplicate functions"""
+        unique_functions: dict[str, FunctionDeclaration] = {}
+        
+        for _, functions in all_functions.items():
+            for func in functions:
+                key = func.full_name
+                if key not in unique_functions:
+                    unique_functions[key] = func
+                else:
+                    # If already exists, keep the one with more complete signature
+                    existing_func = unique_functions[key]
+                    if len(func.signature) > len(existing_func.signature):
+                        unique_functions[key] = func
+        
+        return unique_functions
+    
+
     def get_all_functions(self) -> list[dict[str, Any]]:
 
         try:
             function_list: list[dict[str, Any]] = []
-            # only for C/C++
-            extractor = HeaderFunctionExtractor(project_root=os.path.join(self.project_root, self.project_name), language=self.project_lang)
             # Extract all functions
-            all_functions = extractor.extract_all_functions()
-            
+            all_functions = self.extract_all_functions()
             # Deduplicate
-            unique_functions = extractor.deduplicate_functions(all_functions)
+            unique_functions = self.deduplicate_functions(all_functions)
             # Convert to list of dictionaries    
             for func in unique_functions.values():
                 function_list.append(func.to_dict())

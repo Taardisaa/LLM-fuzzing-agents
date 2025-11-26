@@ -10,31 +10,31 @@ Useful project headers:
 
 {contexts}
 
-The following function fuzzes {function_name}
-// {function_signature};
+The following function fuzzes
+    {function_signature}
 
 The fuzzer example can be one of the following examples:
 
 1. 
-public class ExampleFuzzer {
-    public static void fuzzerTestOneInput(byte[] input) {
+public class ExampleFuzzer {{
+    public static void fuzzerTestOneInput(byte[] input) {{
         ...
         // Call a function of the project under test with arguments derived from
         // input and throw an exception if something unwanted happens.
         ...
-    }
-}
+    }}
+}}
 
 2. 
 
 import com.code_intelligence.jazzer.api.FuzzedDataProvider;
 
-public class ExampleFuzzer {
-    public static void fuzzerTestOneInput(FuzzedDataProvider data) {
+public class ExampleFuzzer {{
+    public static void fuzzerTestOneInput(FuzzedDataProvider data) {{
         int number = data.consumeInt();
         String string = data.consumeRemainingAsString();
         // ...
-    }
-}
+    }}
+}}
 
 Output the full driver code in reply.

@@ -1,4 +1,4 @@
-from constants import PROJECT_PATH
+from constants import PROJECT_PATH, LanguageType
 from pathlib import Path
 from typing import Any
 import os
@@ -39,7 +39,7 @@ class BenchConfig:
         self.num_processes = self.config.get('num_processes', os.cpu_count() // 3) # type: ignore
         self.project_name = self.config.get('project_name', [])
         self.function_signatures = self.config.get('function_signatures', [])
-
+        self.language = LanguageType(self.config.get('language', "CPP"))
         self.fixing_mode = self.config.get('fixing_mode', "issta")
 
         self.clear_msg_flag = self.config.get('clear_msg_flag', True)
@@ -50,6 +50,11 @@ class BenchConfig:
         self.compile_enhance = self.config.get('compile_enhance', False)
         # if True, only use semantic check for evaluation
         self.semantic_mode = self.config.get('semantic_mode', "both")
+
+        # for fuzzing
+        self.no_log = self.config.get('no_log', False)
+        self.ignore_crashes = self.config.get('ignore_crashes', False)
+
     def _load_config(self, config_path: str) -> dict[str, Any]:
         """Load configuration from a YAML file."""
         with open(config_path, 'r') as f:

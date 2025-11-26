@@ -1,8 +1,9 @@
 import os
-from constants import EvalResult
+from constants import EvalResult, LanguageType
 from collections import defaultdict
 from agent_tools.code_tools.parsers.cpp_parser import CPPParser
 # from agent_tools.code_tools.parsers.c_parser import CParser
+from utils.oss_fuzz_utils import OSSFuzzUtils
 from utils.misc import extract_name
 from pathlib import Path
 from typing import DefaultDict
@@ -11,6 +12,8 @@ from typing import Any
 import json
 
 OSSFUZZ = Path("/home/yk/code/oss-fuzz")
+benchmark_dir = Path("/home/yk/code/LLM-reasoning-agents/benchmark-sets")
+
 def get_language_info(project_name: str) -> str:
 
     yaml_file = OSSFUZZ / "projects" / project_name / "project.yaml"
@@ -22,7 +25,7 @@ def get_language_info(project_name: str) -> str:
             return lang
     return "none"
 
-def get_run_res(work_dir: Path, semantic_mode: str="eval") -> EvalResult:
+def get_run_res(work_dir: Path, semantic_mode: str="eval", language: LanguageType=LanguageType.CPP) -> EvalResult:
 
     work_dir = Path(work_dir)
       # read the agent.log
@@ -31,7 +34,7 @@ def get_run_res(work_dir: Path, semantic_mode: str="eval") -> EvalResult:
     func_sig_path = work_dir / "function.txt"
 
     function_signature = func_sig_path.read_text()
-    function_name = extract_name(function_signature)
+    function_name = extract_name(function_signature, language=language)
 
     if not log_file.exists():
         return EvalResult.NoLogError
@@ -56,10 +59,10 @@ def get_run_res(work_dir: Path, semantic_mode: str="eval") -> EvalResult:
 
     parser = CPPParser(file_path=harness_path)
 
-    if parser.exist_function_definition(function_name):
+    if parser.is_function_defined(function_name):
         return EvalResult.Fake
     
-    if parser.is_fuzz_function_called(function_name):
+    if parser.is_function_called(function_name):
         return EvalResult.Success
     else:
         return EvalResult.NoCall
@@ -105,7 +108,7 @@ def collect_run_info(output_path: Path, n_run:int=1, single_run:bool=False) -> t
 
     return all_path, build_failed, all_projects
 
-def run_agent_res(output_path: Path, semantic_mode:str, n_run:int=1): 
+def run_agent_res(output_path: Path, semantic_mode:str, n_run:int=1, language: LanguageType=LanguageType.CPP): 
 
     res_count: DefaultDict[str, int] = defaultdict(int)
     lang_count: DefaultDict[str, int] = defaultdict(int)
@@ -118,8 +121,10 @@ def run_agent_res(output_path: Path, semantic_mode:str, n_run:int=1):
     all_path, build_failed, all_projects = collect_run_info(output_path, n_run=n_run)
     with open(res_file, "w") as save_f:
         for project_name, func_sig, work_dir in all_path:
-            function_name = extract_name(func_sig, keep_namespace=True)
-            eval_res = get_run_res(work_dir, semantic_mode=semantic_mode)
+
+            # get language info
+            function_name = extract_name(func_sig, keep_namespace=True, language=language)
+            eval_res = get_run_res(work_dir, semantic_mode=semantic_mode, language=language)
 
             if eval_res != EvalResult.Success:
                 res_count[eval_res.value] += 1
@@ -237,8 +242,8 @@ if __name__ == "__main__":
     # eval_res = get_run_res(Path("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/agent/mupdf/pdf_save_document/run3_qurmgvgmdbtazfza"), 
                         #    semantic_mode="eval")
     # print(f"Evaluation result: {eval_res}")
-    get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/agent"))
+    # get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/agent"))
     # get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/raw"))
     # get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/raw"))
-    # run_agent_res(Path("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/agent"), semantic_mode="eval", n_run=3)
+    run_agent_res(Path("/home/yk/code/LLM-reasoning-agents/outputs/wild/gpt5-mini/raw"), semantic_mode="eval", n_run=3)
     # run_oss_fuzz_res()

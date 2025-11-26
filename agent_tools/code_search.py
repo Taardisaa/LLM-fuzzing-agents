@@ -3,6 +3,7 @@ import os
 import requests
 from agent_tools.code_tools.parsers.cpp_parser import CPPParser
 from agent_tools.code_tools.parsers.c_parser import CParser
+from agent_tools.code_tools.parsers.java_parser import JavaParser
 import time
 from typing import List, Dict, Optional, Any
 import subprocess 
@@ -33,9 +34,10 @@ class CodeSearch():
         """
         if self.project_lang == LanguageType.CPP:
             return CPPParser
-
         elif self.project_lang == LanguageType.C:
             return CParser
+        elif self.project_lang == LanguageType.JAVA:
+            return JavaParser
         else:
             raise NotImplementedError(f"Parser for {self.project_lang} is not implemented.")
         

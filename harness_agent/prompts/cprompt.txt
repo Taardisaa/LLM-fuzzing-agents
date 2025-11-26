@@ -9,8 +9,8 @@ Useful project headers
 
 {contexts}
 
-The following function fuzzes {function_name}
-extern {function_signature};
+The following function fuzzes
+    {function_signature};
 
 The fuzzer entry point is defined as follows:
 extern int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size);

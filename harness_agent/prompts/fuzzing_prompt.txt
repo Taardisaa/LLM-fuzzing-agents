@@ -12,8 +12,7 @@ Do not change the function signature of the harness function.
 
 {tool_prompt}
 
-The following function fuzzes {function_name}
-extern {function_signature};
+The following function fuzzes {function_signature}
 
 Current Harness Path is {fuzzer_path}
 Must provide the full fixed code. 

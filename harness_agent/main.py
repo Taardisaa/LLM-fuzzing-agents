@@ -9,7 +9,7 @@ from langgraph.graph import StateGraph, END, START  # type: ignore
 from constants import LanguageType, FuzzEntryFunctionMapping, Retriever, ValResult, CompileResults, PROJECT_PATH
 from langchain_core.tools import StructuredTool
 from langgraph.prebuilt import ToolNode # type: ignore
-from utils.misc import save_code_to_file, extract_name, load_prompt_template, is_empty_json_file, write_list_to_file
+from utils.misc import save_code_to_file, extract_name, load_prompt_template, is_empty_json_file
 from harness_agent.modules.fuzzenv import FuzzENV
 from harness_agent.header.universal import HeaderCompilerWraper
 from harness_agent.fixing.raw import FixerPromptBuilder
@@ -54,7 +54,7 @@ class SemaCheckNode:
         self.project_name = project_name
         self.new_project_name = new_project_name
         self.mode = mode
-        self.func_name = extract_name(function_signature, keep_namespace=True)
+        self.func_name = extract_name(function_signature, keep_namespace=True, language=project_lang)
         self.logger = logger
         self.checker = SemaCheck(oss_fuzz_dir, benchmark_dir, project_name, new_project_name, self.func_name, project_lang)
 
@@ -110,7 +110,7 @@ class ISSTAFuzzer(FuzzENV):
         # find the benchmark with the function name
         oss_fuzz_benchmark = None
         for benchmark in benchmark_list:
-            if benchmark.function_name == extract_name(self.function_signature, keep_namespace=False):
+            if benchmark.function_name == extract_name(self.function_signature, keep_namespace=False, language=self.project_lang):
                 oss_fuzz_benchmark = benchmark
                 break
         if self.benchcfg.header_mode == "oss_fuzz" and oss_fuzz_benchmark is None:
@@ -314,7 +314,8 @@ class ISSTAFuzzer(FuzzENV):
 
         # {function_name}
         # Remove the parameters by splitting at the first '('
-        function_name = extract_name(self.function_signature, keep_namespace=True, exception_flag=False)
+        function_name = extract_name(self.function_signature, keep_namespace=True, 
+                                     exception_flag=False, language=self.project_lang)
         
         # {header_files}
         header_string = self.get_header(function_name)
@@ -341,7 +342,7 @@ class ISSTAFuzzer(FuzzENV):
 
         # add other contexts
         prompt_template = prompt_template.format(header_files=header_string, function_usage=function_usage, contexts=contexts,
-                                             function_signature=self.function_signature, function_name=function_name, tool_prompt=self.tool_prompt)
+                                             function_signature=self.function_signature, tool_prompt=self.tool_prompt)
 
         # comment the prompt template
         prompt_template = "// " + prompt_template.replace("\n", "\n// ") + "\n"
@@ -528,11 +529,10 @@ class ISSTAFuzzer(FuzzENV):
         compile_fix_prompt = load_prompt_template(f"{PROJECT_PATH}/harness_agent/prompts/compile_prompt.txt")
         fuzz_fix_prompt = load_prompt_template(f"{PROJECT_PATH}/harness_agent/prompts/fuzzing_prompt.txt")
 
-        function_name = extract_name(self.function_signature, keep_namespace=False)
         local_compile_fix_prompt =  self.fill_prompt(compile_fix_prompt, tool_prompt=self.tool_prompt,   # type: ignore
-                                                     function_signature=self.function_signature, function_name=function_name)   # type: ignore
+                                                     function_signature=self.function_signature)   # type: ignore
         local_fuzz_fix_prompt = self.fill_prompt(fuzz_fix_prompt, tool_prompt=self.tool_prompt,  # type: ignore
-                                                 function_signature=self.function_signature, function_name=function_name)  # type: ignore
+                                                 function_signature=self.function_signature)  # type: ignore
 
         if self.benchcfg.fixing_mode == "oss_fuzz":
             prompt_builder = OSSFUZZFixerPromptBuilder

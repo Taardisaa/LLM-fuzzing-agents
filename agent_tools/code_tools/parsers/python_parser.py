@@ -1,5 +1,5 @@
 from constants import LanguageType, LSPFunction
-from agent_tools.code_tools.parsers.base_parser import BaseParser, FunctionDeclaration
+from agent_tools.code_tools.parsers.base_parser import BaseParser
 from pathlib import Path
 from typing import Optional
 from tree_sitter import Node
@@ -50,38 +50,25 @@ decl_query_dict = {
 }
 
 
-java_func_queries = {
-    "java_functions": """
-    [
+func_declaration_query_dict = {
+    "functions": """
         (method_declaration
-            (identifier) @identifier_name
-            (formal_parameters) @params
-        ) 
+            name: (identifier) @identifier_name
+            parameters: (formal_parameters) @function.params
+            ) @node_name
+
         (constructor_declaration
             name: (identifier) @identifier_name
             parameters: (formal_parameters) @constructor.params
-        )
-        ]@node_name
-    """
+            ) @node_name
+            """,
 }
-class JavaParser(BaseParser):
+class PythonParser(BaseParser):
     def __init__(self, file_path: Optional[Path], source_code: Optional[str] = None):
-        super().__init__(file_path, source_code, decl_query_dict=decl_query_dict, def_query_dict=decl_query_dict,
-                          func_query_dict=java_func_queries, project_lang=LanguageType.JAVA)
-    
-    
-    def get_identifier_name_under_call(self, root_node:Node) -> str:
+        super().__init__(file_path, source_code, decl_query_dict=decl_query_dict, def_query_dict=decl_query_dict, func_query_dict=func_declaration_query_dict, project_lang=LanguageType.Python)
 
-        # the identifier is always a direct child node of the root node 
-        # the last identifier is the correct one for cases like variable declarator
-        for child in root_node.children[::-1]:
-            if child.type != "identifier":
-                continue
-            if child.text:
-                return child.text.decode("utf-8", errors="ignore")    
-        return ""
 
-    # for java, the identifier is only one level deep 
+    # for python, the identifier is only one level deep 
     def get_identifier_node(self, root_node:Node, symbol_name: str) -> Optional[Node]:
         for child in root_node.children:
             if child.type != "identifier":
@@ -91,6 +78,7 @@ class JavaParser(BaseParser):
         return None
     
     def get_definition_node(self, function_name: str) -> Optional[Node]:
+        # TODO this only test on C/C++ language
         
         # Define a query to find "function_definition" nodes
         function_definition_query = self.parser_language.query(f"({self.func_def_name}) @func_def")
@@ -109,38 +97,6 @@ class JavaParser(BaseParser):
                 print("Error in parsing the function definition: ", e)
         
         return None
-    
-
-    def get_decl_funcs(self, node: Node, file_path: Path) -> FunctionDeclaration:
-        function_name = node.text.decode('utf-8') # type: ignore
-        line_number = node.start_point[0] + 1
-        func_decl = FunctionDeclaration(
-            name=function_name,
-            signature="",
-            file_path=str(file_path),
-            line_number=line_number,
-            function_type="method_declaration"
-        )
-        decl_node = self.get_parent_node(node, "method_declaration")
-        if not decl_node:
-            decl_node = self.get_parent_node(node, "constructor_declaration")
-        if not decl_node:
-            print(f"Declaration node not found for function {function_name}")
-            return func_decl
-        
-        function_content = decl_node.text.decode('utf-8', errors='ignore') # type: ignore
-        # simple way to get signature
-        func_decl.signature = function_content.split('{')[0].strip()
-        
-        for class_type in ["class_declaration", "interface_declaration", "record_declaration"]:
-            class_node = self.get_parent_node(node, class_type)
-            if class_node:
-                class_name_node = self.get_child_node(class_node, ["identifier"])
-                if class_name_node:
-                    namespace = class_name_node.text.decode('utf-8', errors='ignore') # type: ignore
-                    func_decl.namespace = namespace
-
-        return func_decl
 
 # Example usage
 if __name__ == "__main__":
@@ -175,12 +131,12 @@ if __name__ == "__main__":
     
     file_path = "/home/yk/code/LLM-reasoning-agents/test/ExampleFuzzer.java"
     extractor = JavaParser(Path(file_path))
-    if extractor.is_function_defined("parse"):
+    if extractor.exist_function_definition("parse"):
         print("Fuzz function is faked.")
     else:
         print("Fuzz function is NOT Faked.")
 
-    if extractor.is_function_called("parse"):
+    if extractor.is_fuzz_function_called("parse"):
         print("Fuzz function is called.")
     else:
         print("Fuzz function is NOT called.")
@@ -192,7 +148,3 @@ if __name__ == "__main__":
     res = extractor.get_fuzz_function_node("parse", expression_flag=True)
     # test_namespace_identifier_matching()
     print(res)
-
-    res = extractor.get_file_functions()
-    for func_info in res:
-        print(f"Function info: {func_info.to_dict()}")

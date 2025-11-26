@@ -54,12 +54,13 @@ class CodeRetriever():
 
         assert not self.container_id.startswith(DockerResults.Error.value), f"Failed to start container: {self.container_id}"
         # run 
-        res = self.docker_tool.exec_in_container(self.container_id, ["bear compile"], timeout=1200)
-        self.logger.info(f"bear res: {res.splitlines()[-2:]}")
-        if res.startswith(DockerResults.Error.value):
-            self.remove_container()
-            self.logger.error(f"Failed to run bear compile: {res}")
-            raise Exception(f"Failed to run bear compile: {res}")
+        if self.project_lang in [LanguageType.C, LanguageType.CPP]:
+            res = self.docker_tool.exec_in_container(self.container_id, ["bear compile"], timeout=1200)
+            self.logger.info(f"bear res: {res.splitlines()[-2:]}")
+            if res.startswith(DockerResults.Error.value):
+                self.remove_container()
+                self.logger.error(f"Failed to run bear compile: {res}")
+                raise Exception(f"Failed to run bear compile: {res}")
 
     def set_harness_pairs(self, harness_pairs: dict[str, Path]) -> None:
         self.harness_pairs = harness_pairs
@@ -252,21 +253,17 @@ class CodeRetriever():
         
         return lsp_resp
 
-
-    @catch_exception
-    def get_symbol_info(self, symbol_name: str, lsp_function: LSPFunction, retriever: Retriever = Retriever.Mixed) -> list[dict[str, Any]]:
+    def preprocess_symbol_name_cpp(self, symbol_name: str) -> str:
         """
-        Retrieves the declaration information of a given symbol using the Language Server Protocol (LSP).
+        Preprocess the symbol name to extract the actual symbol name.
         Args:
-            symbol_name (str): The name of the symbol for which to retrieve the declaration.
+            symbol_name (str): The raw symbol name.
         Returns:
-             list[dict]: [{"source_code":"", "file_path":"", "line":""}]
+            str: The processed symbol name.
         """
-
-        # fmt::v11::detail::print(FILE *, string_view)
-        # the LLM may pass the whole fuinction signature, we need to extract the symbol name
+        # If the symbol name contains function signature, extract the function name
         if "(" in symbol_name:
-            mini_name = extract_name(symbol_name, keep_namespace=True, exception_flag=False)
+            mini_name = extract_name(symbol_name, keep_namespace=True, exception_flag=False, language=self.project_lang)
             if mini_name:
                 symbol_name = mini_name
             else:
@@ -283,6 +280,23 @@ class CodeRetriever():
             symbol_name = symbol_name.split("<")[0]
         elif " " in symbol_name:
             symbol_name = symbol_name.split(" ")[1]  # using the second part of the symbol name
+
+        return symbol_name
+    
+    @catch_exception
+    def get_symbol_info(self, symbol_name: str, lsp_function: LSPFunction, retriever: Retriever = Retriever.Mixed) -> list[dict[str, Any]]:
+        """
+        Retrieves the declaration information of a given symbol using the Language Server Protocol (LSP).
+        Args:
+            symbol_name (str): The name of the symbol for which to retrieve the declaration.
+        Returns:
+             list[dict]: [{"source_code":"", "file_path":"", "line":""}]
+        """
+
+        # fmt::v11::detail::print(FILE *, string_view)
+        # the LLM may pass the whole fuinction signature, we need to extract the symbol name
+        if self.project_lang in [LanguageType.CPP, LanguageType.C]:
+            symbol_name = self.preprocess_symbol_name_cpp(symbol_name)
 
         if retriever == Retriever.Mixed:
             start = time.time()
@@ -447,14 +461,15 @@ class CodeRetriever():
             if i >= 5:
                 self.logger.warning(f"More than 5 {lsp_function.value} found for {symbol_name},Only the first 5 retults are returned")
                 break
+            start_line = max(defi.get("start_line", 0), defi.get("line", 0))
             ret_str += f"The {i+1}th {lsp_function.value} of {symbol_name} is:\n"
             ret_str += "file_path: {}\n".format(defi["file_path"])
-            ret_str += "line: {}\n".format(defi["line"]+1)  # line number is 0-indexed
+            ret_str += "start line: {}\n".format(start_line+1)  # line number is 0-indexed
             # limit the source code length to 50 lines
             all_src = defi["source_code"].splitlines()
             limited_src = "\n".join(all_src[:50])  # Limit to first 50 lines
-            if defi.get("start_line", 0) != 0:
-                ret_str +=  "source_code: \n{}\n".format(add_lineno_to_code(limited_src, defi["start_line"]))
+            if start_line != 0:
+                ret_str +=  "source_code: \n{}\n".format(add_lineno_to_code(limited_src, start_lineno=start_line+1))
             else:
                 ret_str += "source_code: \n{}\n".format(limited_src)
 

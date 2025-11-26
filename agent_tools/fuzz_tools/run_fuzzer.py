@@ -17,8 +17,7 @@ class FuzzerRunner():
         self.save_dir = save_dir
         self.project_lang = project_lang
 
-        
-    def run_fuzzing(self, counter: int, fuzzer_name: str) -> tuple[ValResult, list[str], list[list[str]]]:
+    def run_fuzzing(self, counter: int, fuzzer_name: str, ignore_crashes: bool=False, no_log: bool=False) -> tuple[ValResult, list[str], list[list[str]]]:
         
         def kill_process(process: Any):
             try:
@@ -48,6 +47,8 @@ class FuzzerRunner():
                     '-detect_leaks=0',
                     '-seed=1234'
             ]
+        if ignore_crashes:
+            command.append('-ignore_crashes=1')
         log_file_path = self.save_dir / f"fuzzing{counter}.log"
       # Define the error patterns
         error_patterns = ['ERROR: LeakSanitizer',  'ERROR: libFuzzer:', 'ERROR: AddressSanitizer']
@@ -55,17 +56,17 @@ class FuzzerRunner():
         process = None
         start_time = time.time()
         try:
+            log_file = open(log_file_path, "w", encoding='utf-8', errors='ignore')
+
             # Run process and filter output
             # in some rare cases, the libfuzzer donot stop after timeout
-            process = sp.Popen(command,
-                stdout=sp.PIPE,
-                stderr=sp.STDOUT,
-                bufsize=0,  # Unbuffered for real-time output
-                start_new_session=True  # ← Prevents helper.py/docker from inheriting Pool's pipes
-            )
-            
-            with open(log_file_path, "w", encoding='utf-8', errors='ignore') as log_file:
-            
+            if not no_log:
+                process = sp.Popen(command,
+                    stdout=sp.PIPE,
+                    stderr=sp.STDOUT,
+                    bufsize=0,  # Unbuffered for real-time output
+                    start_new_session=True  # ← Prevents helper.py/docker from inheriting Pool's pipes
+                )
                 inited_found = False
                 done_found = False
                 crash_found = False
@@ -97,12 +98,20 @@ class FuzzerRunner():
                         if "#" in line and "cov" in line:
                             log_file.write(line)
                             log_file.flush()
-                            
-            # Give it a moment to finish gracefully
-            try:
-                process.wait(timeout=5)
-            except sp.TimeoutExpired:
-                kill_process(process)
+            
+                            # Give it a moment to finish gracefully
+             
+                try:
+                    process.wait(timeout=5)
+                except sp.TimeoutExpired:
+                    kill_process(process)
+         
+            else:
+                sp.run(command, stdout=sp.DEVNULL, 
+                       stderr=sp.STDOUT, check=False, timeout=self.run_timeout + 30)
+
+            log_file.close()                       
+
 
             return FuzzLogParser(self.project_lang).parse_log(log_file_path)
             

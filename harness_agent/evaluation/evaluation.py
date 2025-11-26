@@ -36,7 +36,7 @@ class HarnessEval(FuzzENV):
                 continue
 
             # Run the fuzzer
-            fuzz_res, _, _ = fuzzer.run_fuzzing(counter=0, fuzzer_name=fuzzer_name)
+            fuzz_res, _, _ = fuzzer.run_fuzzing(counter=0, fuzzer_name=fuzzer_name, ignore_crashes=self.benchcfg.ignore_crashes, no_log=self.benchcfg.no_log)
             if fuzz_res != ValResult.NoError:
                 logger_wrapper(self.logger, f"Crash when fuzzing: {fuzz_res}", level="error")
                 # return 0,0, False
@@ -51,7 +51,7 @@ class HarnessEval(FuzzENV):
                 
             logger_wrapper(self.logger, f"Collecting coverage for {fuzzer_name}", level="info")
             corpus_dir = Path(self.save_dir) / "corpora"
-            function_name =  extract_name(self.function_signature, keep_namespace=True, exception_flag=False)
+            function_name =  extract_name(self.function_signature, keep_namespace=True, exception_flag=False, language=self.project_lang)
             # init the cov collector
             cov_collector = CovCollector(self.benchcfg.oss_fuzz_dir, self.benchcfg.benchmark_dir, self.project_name, self.new_project_name, self.project_lang, self.logger)
             # collect the coverage
@@ -134,7 +134,7 @@ if __name__ == "__main__":
     from argparse import ArgumentParser
 
     parser  = ArgumentParser(description="Run harness evaluation in parallel.")
-    parser.add_argument("--output_path", type=str, default="/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/agent", help="Path to the output directory containing success_functions.json")
+    parser.add_argument("--output_path", type=str, default="/home/yk/code/LLM-reasoning-agents/outputs/wild/gpt5-mini/raw", help="Path to the output directory containing success_functions.json")
     parser.add_argument("--benchcfg_path", type=str, default="/home/yk/code/LLM-reasoning-agents/cfg/eval_cfg.yaml", help="Path to the benchmark configuration YAML file")
     parser.add_argument("--n_run", type=int, default=3, help="Run number corresponding to success_functions_{n_run}.json")
     parser.add_argument("--num_processes", type=int, default=None, help="Number of parallel processes to use. Defaults to number of CPU cores minus one.")

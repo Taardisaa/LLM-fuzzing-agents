@@ -30,7 +30,7 @@ class LanguageType(Enum):
     """File types of target files."""
     C = 'C'
     CPP = 'CPP'
-    JAVA = 'Java'
+    JAVA = 'JVM'
     Python = 'Python'
     Go = 'Go'
     Rust = "Rust"
