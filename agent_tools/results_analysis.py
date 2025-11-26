@@ -2,9 +2,7 @@ import os
 from constants import EvalResult, LanguageType, PROJECT_PATH
 from collections import defaultdict
 from agent_tools.code_tools.parsers.cpp_parser import CPPParser
-# from agent_tools.code_tools.parsers.c_parser import CParser
-from utils.oss_fuzz_utils import OSSFuzzUtils
-from utils.misc import extract_name
+from utils.misc import extract_name, get_run_path
 from pathlib import Path
 from typing import DefaultDict
 from utils.misc import write_list_to_file
@@ -160,43 +158,24 @@ def run_agent_res(output_path: Path, semantic_mode:str, n_run:int=1, language: L
     with open(output_path / f"success_functions_{n_run}.json", "w") as f:
             json.dump(success_json, f, indent=4)
 
-def get_run_path(save_dir:Path, n_run:int=1) -> list[Path]:
-    
-    run_list: list[Path] = []
-    for project_path in sorted(save_dir.iterdir()):
-        if not project_path.is_dir():
-            continue
-
-        for function_path in project_path.iterdir():
-            if not function_path.is_dir():
-                continue
-
-            run_flag = False
-            for run_dir in function_path.iterdir():
-                if not run_dir.is_dir():
-                    continue
-                if int(run_dir.name.split("_")[0][3:]) != n_run:
-                    continue
-                run_list.append(run_dir)
-                run_flag = True
-                break
-            if not run_flag:
-                print(f"Run{n_run} directory not found for {project_path.name}/{function_path.name}")
-
-    return run_list
-
-  
 
 def get_evaluation_results(eval_path: Path) -> tuple[float, float, float, float]:
 
-    eval_res: list[tuple[str, str, int, int]] = []
+    eval_res: dict[str, tuple[int, int]] = {}
     run_path_list = get_run_path(eval_path, n_run=1)
     print(f"Found {len(run_path_list)} run1 directories.")
     for run_dir in sorted(run_path_list):
         cov_file = run_dir / "cov.txt"
+        function_file = run_dir / "function.txt"
+        if not function_file.exists():
+            print(f"Function signature file not found: {function_file}")
+            continue
+        function_sig = function_file.read_text().strip()
+
+        key = "{}+{}".format(run_dir.parent.parent.name, function_sig)
         if not cov_file.exists():
             print(f"Coverage file not found: {cov_file}")
-            eval_res.append((run_dir.parent.parent.name, run_dir.parent.name, 0, 0))
+            eval_res[key] = (0, 0)
             continue
 
         # check whether the fuzz crash 
@@ -205,24 +184,24 @@ def get_evaluation_results(eval_path: Path) -> tuple[float, float, float, float]
 
         if "ValResult.Crash" in log_file.read_text():
             # print(f"Fuzzer crashed during evaluation: {log_file}")
-            eval_res.append((run_dir.parent.parent.name, run_dir.parent.name, -1, -1))
+            eval_res[key] = (-1, -1)
             continue
 
         cov_lines = cov_file.read_text().split("\n")
         init_cov = int(cov_lines[0].split(":")[-1].strip())
         final_cov = int(cov_lines[1].split(":")[-1].strip())
 
-        eval_res.append((run_dir.parent.parent.name, run_dir.parent.name, init_cov, final_cov))
+        eval_res[key] = (init_cov, final_cov)
 
     # do some statistics
     # crashed count
-    crash_count = sum(1 for _, _, init_cov, final_cov in eval_res if init_cov == -1 and final_cov == -1)
+    crash_count = sum(1 for _, (init_cov, final_cov) in eval_res.items() if init_cov == -1 and final_cov == -1)
     # 1. init = 0, not reached
-    zero_init_count = sum(1 for _, _, init_cov, final_cov in eval_res if init_cov == 0 and final_cov == 0)
+    zero_init_count = sum(1 for _, (init_cov, final_cov) in eval_res.items() if init_cov == 0 and final_cov == 0)
     # 2. no improvement, init == final but init > 0
-    no_improve_count = sum(1 for _, _, init_cov, final_cov in eval_res if init_cov == final_cov and init_cov > 0)
+    no_improve_count = sum(1 for _, (init_cov, final_cov) in eval_res.items() if init_cov == final_cov and init_cov > 0)
     # 3. improved
-    improved_count = sum(1 for _, _, init_cov, final_cov in eval_res if final_cov > init_cov)
+    improved_count = sum(1 for _, (init_cov, final_cov) in eval_res.items() if final_cov > init_cov)
 
     print(f"Total evaluated functions: {len(eval_res)}")
     print(f"Functions with crashes during evaluation: {crash_count / len(eval_res) * 100:.2f}% ({crash_count})")
@@ -231,9 +210,8 @@ def get_evaluation_results(eval_path: Path) -> tuple[float, float, float, float]
     print(f"Functions with improved coverage: {improved_count / len(eval_res) * 100:.2f}% ({improved_count})")
 
     # save to file
-    with open(eval_path / "evaluation_results.txt", "w") as f:
-        for project_name, function_name, init_cov, final_cov in eval_res:
-            f.write(f"{project_name}/{function_name}: Initial coverage: {init_cov}, Final coverage: {final_cov}\n")
+    with open(eval_path / "evaluation_results.json", "w") as f:
+        json.dump(eval_res, f, indent=4)
 
     return round(crash_count*100 / len(eval_res), 2), round(zero_init_count*100 / len(eval_res), 2), round(no_improve_count*100 / len(eval_res), 2), round(improved_count*100 / len(eval_res), 2)
 
@@ -244,6 +222,6 @@ if __name__ == "__main__":
     # print(f"Evaluation result: {eval_res}")
     # get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/agent"))
     # get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/raw"))
-    # get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/raw"))
-    run_agent_res(Path("/home/yk/code/LLM-reasoning-agents/outputs/wild/gpt5-mini/raw"), semantic_mode="eval", n_run=3)
+    # get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs/evaluation/gpt5-mini/agent"))
+    run_agent_res(Path("/home/yk/code/LLM-reasoning-agents/outputs/wild/gpt5-mini/agent"), semantic_mode="eval", n_run=3)
     # run_oss_fuzz_res()

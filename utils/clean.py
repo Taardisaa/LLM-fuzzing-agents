@@ -1,6 +1,8 @@
 import os
 from pathlib import Path    
 import shutil
+import json
+from typing import Any
 
 def remove_large_log_files(directory: str, size_limit_mb: int = 1):
     size_limit_bytes = size_limit_mb * 1024 * 1024
@@ -202,10 +204,43 @@ def remove_empty_dir(dir: Path):
 
     print(f"Total removed empty dirs: {count}")
 
+def filter_eval_projects(save_path: Path, eval_path: Path, threshold: int = 50):
+
+    success_file = save_path / "success_functions_3.json"
+    eval_file = eval_path / "evaluation_results.json"
+    if not success_file.exists() or not eval_file.exists():
+        print("Required files do not exist.")
+        return
+    
+    # load all eval projects
+    removed_keys: list[str] = []
+    with open(eval_file, 'r') as f:
+        eval_data = json.load(f)
+        for key, (init_cov, final_cov) in eval_data.items():
+            if final_cov - init_cov < threshold:
+                removed_keys.append(key)
+
+    filtered_data: dict[str, Any] = {}
+    with open(success_file, 'r') as f:
+        success_data = json.load(f)
+        for key, value in success_data.items():
+            if key not in removed_keys:
+                filtered_data[key] = value
+
+    print(f"Remain  {len(filtered_data.keys())} functions above threshold {threshold}.")
+
+    with open(save_path / "filtered_success_functions.json", "w") as f:
+        json.dump(filtered_data, f, indent=4)
+
+
+
 # remove_failed_dir("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/agent")
-remove_empty_cache("/home/yk/code/LLM-reasoning-agents/cache")
+# remove_empty_cache("/home/yk/code/LLM-reasoning-agents/cache")
 # remove_evaluation(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/agent"))
 # Example usage
 # remove_corpus_dir("/home/yk/code/LLM-reasoning-agents/outputs_wild")
 # remove_large_log_files("/home/yk/code/LLM-reasoning-agents/outputs_wild")
 # remove_run_dir("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/agent", n_run=2)
+filter_eval_projects(Path("/home/yk/code/LLM-reasoning-agents/outputs/wild/gpt5-mini/agent"),
+                     Path("/home/yk/code/LLM-reasoning-agents/outputs/evaluation/gpt5-mini/agent"),
+                     threshold=50)

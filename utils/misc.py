@@ -429,7 +429,7 @@ def fix_claude_tool_calls(res: Any) -> Optional[AIMessage]:
                         args = json.loads(args_value)
                     else:
                         # If it's already a dict or other object, use it directly
-                        args = args_value if args_value is not None else {}
+                        args = args_value if args_value is not None else {} # type: ignore
                 except json.JSONDecodeError:
                     # If JSON parsing fails, use empty dict
                     print(f"Failed to parse args for tool {function_name}: {args_value}")
@@ -439,7 +439,7 @@ def fix_claude_tool_calls(res: Any) -> Optional[AIMessage]:
             tool_call = ToolCall(
                 id=call_id,
                 name=function_name,
-                args=args
+                args=args # type: ignore
             )
             tool_calls.append(tool_call)
         
@@ -510,6 +510,33 @@ def is_empty_json_file(json_path: Path) -> bool:
             return False
     except json.JSONDecodeError:
         return True
+    
+def get_run_path(save_dir:Path, n_run:int=1) -> list[Path]:
+    
+    run_list: list[Path] = []
+    for project_path in sorted(save_dir.iterdir()):
+        if not project_path.is_dir():
+            continue
+
+        for function_path in project_path.iterdir():
+            if not function_path.is_dir():
+                continue
+
+            run_flag = False
+            for run_dir in function_path.iterdir():
+                if not run_dir.is_dir():
+                    continue
+                if int(run_dir.name.split("_")[0][3:]) != n_run:
+                    continue
+                run_list.append(run_dir)
+                run_flag = True
+                break
+            if not run_flag:
+                print(f"Run{n_run} directory not found for {project_path.name}/{function_path.name}")
+
+    return run_list
+
+
 if __name__ == "__main__":
 
     with open("/home/yk/code/LLM-reasoning-agents/benchmark-sets/ntu/gdk-pixbuf.yaml", 'r') as f:
