@@ -35,7 +35,8 @@ class HarnessEval(FuzzENV):
                 continue
 
             # Run the fuzzer
-            fuzz_res, _, _ = fuzzer.run_fuzzing(counter=0, fuzzer_name=fuzzer_name, ignore_crashes=self.benchcfg.ignore_crashes, no_log=self.benchcfg.no_log)
+            fuzz_res, _, _ = fuzzer.run_fuzzing(counter=0, fuzzer_name=fuzzer_name, 
+                                                ignore_crashes=self.benchcfg.ignore_crashes, no_log=self.benchcfg.no_log)
             if fuzz_res != ValResult.NoError:
                 logger_wrapper(self.logger, f"Crash when fuzzing: {fuzz_res}", level="error")
                 # return 0,0, False
