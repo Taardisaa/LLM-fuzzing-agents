@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 from math import ceil
@@ -9,71 +10,106 @@ from pathlib import Path
 from constants import CompileResults, ValResult, PROJECT_PATH
 from utils.misc import extract_name
 from agent_tools.fuzz_tools.cov_collecter import CovCollector
-from typing import Optional
 import multiprocessing
 import psutil
 import shutil
+import re
 
 class HarnessEval(FuzzENV):
     def __init__(self,  benchcfg: BenchConfig, function_signature: str, project_name: str, local_harness: Path, n_run: int=1):
         super().__init__(benchcfg=benchcfg, function_signature=function_signature, project_name=project_name, n_run=n_run)
         self.harness_code = local_harness.read_text()
 
-    def eval_harness(self) -> tuple[int, int, bool]:
-
+    def eval_harness(self, fuzzer_name: str, harness_path: Path) -> tuple[int, int, bool]:
+        '''
+        :param fuzzer_name: the fuzzer name associated with the harness
+        :param harness_path: the path of the harness file inside the oss-fuzz project docker image
+        '''
         compiler = Compiler(self.benchcfg.oss_fuzz_dir, self.benchcfg.benchmark_dir, self.project_name, self.new_project_name)
 
         fuzzer = FuzzerRunner(oss_fuzz_dir=self.benchcfg.oss_fuzz_dir, new_project_name=self.new_project_name,
                 project_lang=self.project_lang, run_timeout=self.benchcfg.run_time, save_dir=self.save_dir)
         
         compile_res = CompileResults.FuzzerError
-        for fuzzer_name, harness_path in self.harness_pairs.items():
           
-            compile_res, _ = compiler.compile_harness(harness_code=self.harness_code, harness_path=harness_path, fuzzer_name=fuzzer_name)
-            if compile_res != CompileResults.Success:
-                continue
+        compile_res, _ = compiler.compile_harness(harness_code=self.harness_code, harness_path=harness_path, fuzzer_name=fuzzer_name)
+        if compile_res != CompileResults.Success:
+            self.logger.error(f"Fuzzer compilation failed: {compile_res}") if self.logger else None
+            return 0, 0, False
 
-            # Run the fuzzer
-            fuzz_res, _, _ = fuzzer.run_fuzzing(counter=0, fuzzer_name=fuzzer_name, 
-                                                ignore_crashes=self.benchcfg.ignore_crashes, no_log=self.benchcfg.no_log)
-            if fuzz_res != ValResult.NoError:
-                self.logger.error(f"Crash when fuzzing: {fuzz_res}") if self.logger else None
-                # return 0,0, False
-                # copy the crash file to save_dir
-                out_path = self.benchcfg.oss_fuzz_dir / "build" / "out" /self.new_project_name
-                crash_files = list(out_path.glob("crash-*"))
+        # Run the fuzzer
+        fuzz_res, _, _ = fuzzer.run_fuzzing(counter=0, fuzzer_name=fuzzer_name, 
+                                            ignore_crashes=self.benchcfg.ignore_crashes, no_log=self.benchcfg.no_log)
+        if fuzz_res != ValResult.NoError:
+            self.logger.error(f"Crash when fuzzing: {fuzz_res}") if self.logger else None
+            # return 0,0, False
+            # copy the crash file, leak, timeout to save_dir
+            out_path = self.benchcfg.oss_fuzz_dir / "build" / "out" /self.new_project_name
+
+            for pattern in ["crash-*", "leak-*", "timeout-*"]:
+                crash_files = list(out_path.glob(pattern))
                 for crash_file in crash_files:
                     dest_file = self.save_dir / crash_file.name
                     os.makedirs(self.save_dir, exist_ok=True)
                     shutil.copy(crash_file, dest_file)
 
-                
-            self.logger.info(f"Collecting coverage for {fuzzer_name}") if self.logger else None
-            corpus_dir = Path(self.save_dir) / "corpora"
-            function_name = extract_name(self.function_signature, keep_namespace=True, exception_flag=False, language=self.project_lang)
-            # init the cov collector
-            cov_collector = CovCollector(self.benchcfg.oss_fuzz_dir, self.benchcfg.benchmark_dir, self.project_name, self.new_project_name, self.project_lang, self.logger)
-            # collect the coverage
-            init_cov, final_cov, changed = cov_collector.collect_coverage(self.harness_code, harness_path, fuzzer_name, function_name, corpus_dir)
             
-            return init_cov, final_cov, changed
+        self.logger.info(f"Collecting coverage for {fuzzer_name}") if self.logger else None
+        corpus_dir = Path(self.save_dir) / "corpora"
+        function_name = extract_name(self.function_signature, keep_namespace=True, exception_flag=False, language=self.project_lang)
+        # init the cov collector
+        cov_collector = CovCollector(self.benchcfg.oss_fuzz_dir, self.benchcfg.benchmark_dir, self.project_name, self.new_project_name, self.project_lang, self.logger)
+        # collect the coverage
+        init_cov, final_cov, changed = cov_collector.collect_coverage(self.harness_code, harness_path, fuzzer_name, function_name, corpus_dir)
+        
+        return init_cov, final_cov, changed
 
-        self.logger.error(f"All fuzzer compilation failed: {compile_res}") if self.logger else None
-        # Run the harness with the specified path
-        return 0, 0, False
-    
+
+def extract_fuzzer_name(log_lines: list[str]) -> tuple[str, str]:
+    fuzzer_name = ""
+    for i, line in enumerate(log_lines[::-1]):
+        if "Semantic check passed" not in line:
+            continue
+
+        # found the line
+        # Fuzz res:No Error, [] for run1_auyckfajosgnqetd:ssh_privkey_fuzzer (validation.py:61)
+        fuzzer_name = line.split(":")[-1].split("(")[0]
+   
+   #{'ssh_privkey_fuzzer': '/src/libssh/tests/fuzz/ssh_privkey_fuzzer.c'}
+    for line in log_lines[::-1]:
+        if "harness_fuzzer_pairs" in line:
+            break
+        match = re.search(r'content:(\{.*\})', line)
+        if match:
+            fuzzer_data = ast.literal_eval(match.group(1))
+            if fuzzer_name in fuzzer_data.keys():
+                return fuzzer_name, fuzzer_data[fuzzer_name]
+        # obtain the string between {}
+        print(f"Could not find fuzzer harness pairs in line: {line}")
+
+    return fuzzer_name.strip(), ""
 
 def process_single_result(args: tuple[str, str, Path, BenchConfig]): # type: ignore
     """Process a single project/function/workdir combination"""
     project_name, function_signature, work_dir, benchcfg = args # type: ignore
     harness_file = work_dir / "harness.txt"
     
+    # read the agent log
+    agent_log_file = work_dir / "agent.log"
+    log_lines = agent_log_file.read_text().splitlines()
+  
+    fuzzer_name, harness_path = extract_fuzzer_name(log_lines)
+    if fuzzer_name == "" or harness_path == "":
+        print(f"Could not extract fuzzer name from log: {agent_log_file}")
+        return project_name, function_signature, 0, 0
+    harness_file = Path(harness_path)
+
     try:
         # get the evaluator
         evaluator = HarnessEval(benchcfg=benchcfg, function_signature=function_signature, project_name=project_name, local_harness=harness_file)
         if evaluator.early_exit_flag:
             return project_name, function_signature, 0, 0
-        init_cov, final_cov, _ = evaluator.eval_harness()
+        init_cov, final_cov, _ = evaluator.eval_harness(fuzzer_name=fuzzer_name, harness_path=harness_file)
 
         # save coverage
         cov_file = evaluator.save_dir / "cov.txt"
@@ -129,10 +165,10 @@ if __name__ == "__main__":
     from argparse import ArgumentParser
 
     parser  = ArgumentParser(description="Run harness evaluation in parallel.")
-    parser.add_argument("--output_path", type=str, default=f"{PROJECT_PATH}/outputs/wild/gpt5-mini/agent", help="Path to the output directory containing success_functions.json")
-    parser.add_argument("--benchcfg_path", type=str, default=f"{PROJECT_PATH}/cfg/eval_cfg.yaml", help="Path to the benchmark configuration YAML file")
+    parser.add_argument("--output_path", type=str, default=f"{PROJECT_PATH}/outputs/projects/gpt5-mini/agent", help="Path to the output directory containing success_functions.json")
+    parser.add_argument("--benchcfg_path", type=str, default=f"{PROJECT_PATH}/cfg/gpt5_mini/projects/eval_cfg.yaml", help="Path to the benchmark configuration YAML file")
     parser.add_argument("--n_run", type=int, default=3, help="Run number corresponding to success_functions_{n_run}.json")
-    parser.add_argument("--n_partitations", type=int, default=8, help="Total number of partitions to divide the workload into.")
+    parser.add_argument("--n_partitations", type=int, default=1, help="Total number of partitions to divide the workload into.")
     parser.add_argument("--partitation_id", type=int, default=0, help="ID of the partition to process (0-indexed).")
     args = parser.parse_args()
 

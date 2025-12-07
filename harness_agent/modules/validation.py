@@ -10,6 +10,7 @@ from constants import ValResult
 from agent_tools.code_tools.parsers.cpp_parser import CPPParser
 from agent_tools.code_tools.parsers.c_parser import CParser
 from utils.misc import extract_name
+import json
 
 FUZZMSG = {
     ValResult.ConstantCoverageError: "The above code can be built successfully but its fuzzing seems not effective since the coverage never change. Please make sure the fuzz data is used.",
@@ -72,6 +73,10 @@ class Validation(FuzzerRunner):
             fuzz_error_msg = error_type + "\n" + "\n".join(first_stack)
             return {"messages": ("user", fuzz_res), "fuzz_msg": fuzz_error_msg}
         else:
+            # no error
+            fuzzer_info = {"fuzzer_name": fuzzer_name, "fuzzer_path": state.get("fuzzer_path", "")}
+            with open(self.save_dir / "fuzzer_info.json", 'w') as f:
+                json.dump(fuzzer_info, f)
             return {"messages": ("user", fuzz_res)}
 
 
