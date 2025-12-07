@@ -117,34 +117,44 @@ def run_agent_res(output_path: Path, semantic_mode:str, n_run:int=1, language: L
     
     # save the projects whose functions are all failed
     all_path, build_failed, all_projects = collect_run_info(output_path, n_run=n_run)
-    with open(res_file, "w") as save_f:
-        for project_name, func_sig, work_dir in all_path:
+    
+    # collect results first
+    results_list: list[tuple[str, str, EvalResult]] = []
+    for project_name, func_sig, work_dir in all_path:
 
-            # get language info
-            function_name = extract_name(func_sig, keep_namespace=True, language=language)
-            eval_res = get_run_res(work_dir, semantic_mode=semantic_mode, language=language)
+        # get language info
+        function_name = extract_name(func_sig, keep_namespace=True, language=language)
+        eval_res = get_run_res(work_dir, semantic_mode=semantic_mode, language=language)
 
-            if eval_res != EvalResult.Success:
-                res_count[eval_res.value] += 1
-                save_f.write(f"{project_name}/{function_name}. fuzz res: {eval_res}\n")
-                continue
-
-            if project_name in all_projects:
-                all_projects.remove(project_name)
-            
-            #  only count once
+        if eval_res != EvalResult.Success:
             res_count[eval_res.value] += 1
+            results_list.append((project_name, function_name, eval_res))
+            continue
 
-            func_dict = {
-                "project": project_name,
-                "work_dir": str(work_dir),
-            }
+        if project_name in all_projects:
+            all_projects.remove(project_name)
+        
+        #  only count once
+        res_count[eval_res.value] += 1
 
-            success_json[project_name+ "+" + func_sig] = func_dict
+        func_dict = {
+            "project": project_name,
+            "work_dir": str(work_dir),
+        }
 
-            # get language info
-            lang = get_language_info(project_name)
-            lang_count[lang] += 1
+        success_json[project_name+ "+" + func_sig] = func_dict
+
+        # get language info
+        lang = get_language_info(project_name)
+        lang_count[lang] += 1
+        results_list.append((project_name, function_name, eval_res))
+    
+    # sort results by project_name then function_name
+    results_list.sort(key=lambda x: (x[0], x[1]))
+    
+    # save sorted results to file
+    with open(res_file, "w") as save_f:
+        for project_name, function_name, eval_res in results_list:
             save_f.write(f"{project_name}/{function_name}. fuzz res: {eval_res}\n")
         
         save_f.write(f"Results count: {res_count}\n")
