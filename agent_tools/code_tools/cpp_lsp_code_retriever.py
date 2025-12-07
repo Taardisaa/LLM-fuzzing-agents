@@ -1,8 +1,6 @@
 import json
 import os
 import argparse
-
-from openai import project
 from agent_tools.code_tools.lsp_clients.c_lsp_client import CLSPCLient
 from agent_tools.code_tools.lsp_clients.multi_lsp_client import MultilspyClient
 import asyncio
