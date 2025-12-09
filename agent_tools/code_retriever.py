@@ -280,7 +280,8 @@ class CodeRetriever():
             symbol_name = symbol_name.split("<")[0]
         elif " " in symbol_name:
             symbol_name = symbol_name.split(" ")[1]  # using the second part of the symbol name
-
+       
+        symbol_name = symbol_name.strip()
         return symbol_name
     
     @catch_exception
@@ -298,6 +299,9 @@ class CodeRetriever():
         if self.project_lang in [LanguageType.CPP, LanguageType.C]:
             symbol_name = self.preprocess_symbol_name_cpp(symbol_name)
 
+        if symbol_name == "":
+            self.logger.error("Error: symbol_name is empty!")
+            return []
         if retriever == Retriever.Mixed:
             start = time.time()
             resp = self.get_symbol_info_retriever(symbol_name, lsp_function, Retriever.LSP)

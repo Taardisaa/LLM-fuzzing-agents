@@ -15,7 +15,7 @@ from utils import introspector_utils
 
 class FuzzENV():
 
-    def __init__(self,  benchcfg: BenchConfig, function_signature: str, project_name: str, n_run: int):
+    def __init__(self,  benchcfg: BenchConfig, function_signature: str, project_name: str, n_run: int, eval_flag: bool = False):
         self.benchcfg = benchcfg
         self.early_exit_flag = False
 
@@ -43,10 +43,12 @@ class FuzzENV():
 
         self.docker_tool = DockerUtils(self.benchcfg.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang)
         self.init_workspace()
-        self.code_retriever = CodeRetriever(self.benchcfg.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.benchcfg.usage_token_limit, self.benchcfg.cache_root, self.logger)
-
-        self.harness_pairs = self.get_all_harness_fuzzer_pairs(cache=False)
-        self.code_retriever.set_harness_pairs(self.harness_pairs)
+        
+        self.eval_flag = eval_flag
+        if not self.eval_flag:
+            self.code_retriever = CodeRetriever(self.benchcfg.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.benchcfg.usage_token_limit, self.benchcfg.cache_root, self.logger)
+            self.harness_pairs = self.get_all_harness_fuzzer_pairs(cache=False)
+            self.code_retriever.set_harness_pairs(self.harness_pairs)
 
     def merge_harness_pairs(self) -> dict[str, str]:
          # collect all harness_path, fuzzer pairs
@@ -275,7 +277,8 @@ class FuzzENV():
     def clean_workspace(self):
         '''Clean the workspace'''
         try:        
-            self.code_retriever.remove_container()
+            if not self.eval_flag:
+                self.code_retriever.remove_container()
 
             # first remove the out directory
             self.docker_tool.clean_build_dir()

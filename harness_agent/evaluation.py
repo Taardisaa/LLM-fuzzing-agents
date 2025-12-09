@@ -17,7 +17,7 @@ import re
 
 class HarnessEval(FuzzENV):
     def __init__(self,  benchcfg: BenchConfig, function_signature: str, project_name: str, local_harness: Path, n_run: int=1):
-        super().__init__(benchcfg=benchcfg, function_signature=function_signature, project_name=project_name, n_run=n_run)
+        super().__init__(benchcfg=benchcfg, function_signature=function_signature, project_name=project_name, n_run=n_run, eval_flag=True)
         self.harness_code = local_harness.read_text()
 
     def eval_harness(self, fuzzer_name: str, harness_path: Path) -> tuple[int, int, bool]:
@@ -46,7 +46,7 @@ class HarnessEval(FuzzENV):
             # copy the crash file, leak, timeout to save_dir
             out_path = self.benchcfg.oss_fuzz_dir / "build" / "out" /self.new_project_name
 
-            for pattern in ["crash-*", "leak-*", "timeout-*"]:
+            for pattern in ["crash-*", "leak-*", "timeout-*", "oom-*"]:
                 crash_files = list(out_path.glob(pattern))
                 for crash_file in crash_files:
                     dest_file = self.save_dir / crash_file.name
@@ -67,18 +67,22 @@ class HarnessEval(FuzzENV):
 
 def extract_fuzzer_name(log_lines: list[str]) -> tuple[str, str]:
     fuzzer_name = ""
-    for i, line in enumerate(log_lines[::-1]):
-        if "Semantic check passed" not in line:
+    for line in log_lines[::-1]:
+        if "Fuzz res:No Error" not in line:
             continue
 
         # found the line
         # Fuzz res:No Error, [] for run1_auyckfajosgnqetd:ssh_privkey_fuzzer (validation.py:61)
-        fuzzer_name = line.split(":")[-1].split("(")[0]
-   
-   #{'ssh_privkey_fuzzer': '/src/libssh/tests/fuzz/ssh_privkey_fuzzer.c'}
+        match = re.search(r'run\d+_\w+:(\w+)\s*\(', line)
+        if match:
+            fuzzer_name = match.group(1)
+        if fuzzer_name == "":
+            print("Could not find fuzzer name in log lines.")
+
+    #{'ssh_privkey_fuzzer': '/src/libssh/tests/fuzz/ssh_privkey_fuzzer.c'}
     for line in log_lines[::-1]:
-        if "harness_fuzzer_pairs" in line:
-            break
+        if "harness_fuzzer_pairs" not in line:
+            continue
         match = re.search(r'content:(\{.*\})', line)
         if match:
             fuzzer_data = ast.literal_eval(match.group(1))
@@ -86,30 +90,32 @@ def extract_fuzzer_name(log_lines: list[str]) -> tuple[str, str]:
                 return fuzzer_name, fuzzer_data[fuzzer_name]
         # obtain the string between {}
         print(f"Could not find fuzzer harness pairs in line: {line}")
-
     return fuzzer_name.strip(), ""
 
 def process_single_result(args: tuple[str, str, Path, BenchConfig]): # type: ignore
     """Process a single project/function/workdir combination"""
     project_name, function_signature, work_dir, benchcfg = args # type: ignore
-    harness_file = work_dir / "harness.txt"
+    local_harness_file = work_dir / "harness.txt"
     
     # read the agent log
     agent_log_file = work_dir / "agent.log"
     log_lines = agent_log_file.read_text().splitlines()
   
-    fuzzer_name, harness_path = extract_fuzzer_name(log_lines)
-    if fuzzer_name == "" or harness_path == "":
+    fuzzer_name, remote_harness_path = extract_fuzzer_name(log_lines)
+    if fuzzer_name == "" or remote_harness_path == "":
         print(f"Could not extract fuzzer name from log: {agent_log_file}")
         return project_name, function_signature, 0, 0
-    harness_file = Path(harness_path)
+    
+    print("harness_path:", remote_harness_path)
+    remote_harness_path = Path(remote_harness_path)
 
     try:
         # get the evaluator
-        evaluator = HarnessEval(benchcfg=benchcfg, function_signature=function_signature, project_name=project_name, local_harness=harness_file)
+        evaluator = HarnessEval(benchcfg=benchcfg, function_signature=function_signature,
+                                project_name=project_name, local_harness=local_harness_file, n_run=1)
         if evaluator.early_exit_flag:
             return project_name, function_signature, 0, 0
-        init_cov, final_cov, _ = evaluator.eval_harness(fuzzer_name=fuzzer_name, harness_path=harness_file)
+        init_cov, final_cov, _ = evaluator.eval_harness(fuzzer_name=fuzzer_name, harness_path=remote_harness_path)
 
         # save coverage
         cov_file = evaluator.save_dir / "cov.txt"
@@ -131,7 +137,7 @@ def run_evaluation(output_path: Path, benchcfg:BenchConfig, n_run:int=1, n_parti
     if benchcfg.num_processes is not None:
         num_processes = min(benchcfg.num_processes, num_processes)
 
-    res_json = output_path / f"filtered_success_functions.json"
+    res_json = output_path / f"success_functions_{n_run}.json"
     if not res_json.exists():
         print(f"No success_functions_{n_run}.json found in {output_path.parent}, exit.")
         return
@@ -165,8 +171,8 @@ if __name__ == "__main__":
     from argparse import ArgumentParser
 
     parser  = ArgumentParser(description="Run harness evaluation in parallel.")
-    parser.add_argument("--output_path", type=str, default=f"{PROJECT_PATH}/outputs/projects/gpt5-mini/agent", help="Path to the output directory containing success_functions.json")
-    parser.add_argument("--benchcfg_path", type=str, default=f"{PROJECT_PATH}/cfg/gpt5_mini/projects/eval_cfg.yaml", help="Path to the benchmark configuration YAML file")
+    parser.add_argument("--output_path", type=str, default=f"{PROJECT_PATH}/outputs/projects/gpt5-mini/libxml2", help="Path to the output directory containing success_functions.json")
+    parser.add_argument("--benchcfg_path", type=str, default=f"{PROJECT_PATH}/cfg/gpt5_mini/projects/eval_cfg_libxml2.yaml", help="Path to the benchmark configuration YAML file")
     parser.add_argument("--n_run", type=int, default=3, help="Run number corresponding to success_functions_{n_run}.json")
     parser.add_argument("--n_partitations", type=int, default=1, help="Total number of partitions to divide the workload into.")
     parser.add_argument("--partitation_id", type=int, default=0, help="ID of the partition to process (0-indexed).")

@@ -74,7 +74,8 @@ class Validation(FuzzerRunner):
             return {"messages": ("user", fuzz_res), "fuzz_msg": fuzz_error_msg}
         else:
             # no error
-            fuzzer_info = {"fuzzer_name": fuzzer_name, "fuzzer_path": state.get("fuzzer_path", "")}
+            fuzz_path = state.get("fuzzer_path", "")
+            fuzzer_info: dict[str, str] = {"fuzzer_name": fuzzer_name, "fuzzer_path": str(fuzz_path)}
             with open(self.save_dir / "fuzzer_info.json", 'w') as f:
                 json.dump(fuzzer_info, f)
             return {"messages": ("user", fuzz_res)}
