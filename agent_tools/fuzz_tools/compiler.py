@@ -7,6 +7,7 @@ import os
 import shutil
 from pathlib import Path
 from typing import Optional
+import random
 
 class Compiler():
 
@@ -28,7 +29,7 @@ class Compiler():
         self.include_path: set[str] = include_path if include_path else set()
 
 
-    def write_dockerfile(self, harness_path: Path, cmd: Optional[str]=None, write_flag: bool=True) -> None:
+    def write_dockerfile(self, harness_code: str, harness_path: Path, cmd: Optional[str]=None) -> None:
         '''Copy the harness file to overwrite all existing harness files'''
         # write copy in dockerfile and re-build the image
 
@@ -42,11 +43,20 @@ class Compiler():
         else:
             shutil.copy(docker_file_path, docker_file_bak)
 
-        if not write_flag:
-            return
+        
+        # save the target to the project, generate a random name to prevent caching
+        random_str = ''.join(random.choices("abcdefghijklmnopqrstuvwxyz", k=16))
+        new_local_name = f"{harness_path.stem}_{random_str}{harness_path.suffix}"
+        local_harness_path = self.oss_fuzz_dir / "projects" / self.new_project_name / new_local_name
+        save_code_to_file(harness_code, local_harness_path)
+        
+        # for other files in the project that may include the harness file, we also need to overwrite them
+        original_harness_path = self.oss_fuzz_dir / "projects" / self.new_project_name / harness_path.name
+        save_code_to_file(harness_code, original_harness_path)
+
         with open(docker_file_path, 'a') as f:
             # Add additional statement in dockerfile to overwrite with generated fuzzer
-            f.write(f'\nCOPY {os.path.basename(harness_path)} {harness_path}\n')
+            f.write(f'\nCOPY {new_local_name} {harness_path}\n')
 
             if cmd:
                 f.write(f'{cmd}\n')
@@ -84,12 +94,9 @@ class Compiler():
         # 3. The code compiles but has a compile error. The code should be fixed.
 
         # write the dockerfile
-        self.write_dockerfile(harness_path, cmd)
+        self.write_dockerfile(harness_code, harness_path, cmd)
         self.write_build_script()
 
-        # save the target to the project
-        local_harness_path = self.oss_fuzz_dir / "projects" / self.new_project_name / harness_path.name 
-        save_code_to_file(harness_code, local_harness_path)
 
 
         # build the image
