@@ -4,7 +4,7 @@ Generate a fuzz driver based the given function signature in C language. Output 
 @ examples of API usage:
 {function_usage}
 
-Useful project headers
+Useful project headers. For static function, include the .c/.cc/.cpp file.
 {header_files}
 
 {contexts}
