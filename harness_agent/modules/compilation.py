@@ -216,7 +216,7 @@ class CompilerWraper(Compiler):
     def compile(self, state: dict[str, Any]) -> dict[str, Any]: # type: ignore
         '''Compile the harness file'''
         
-        harness_path = state.get("harness_path", list(self.harness_dict.values())[0])
+        harness_path = state.get("fuzzer_path", list(self.harness_dict.values())[0])
         fuzzer_name = state.get("fuzzer_name", list(self.harness_dict.keys())[0])
         fix_counter = state.get("fix_counter", 0)
         msg = self.compile_helper(state["harness_code"], harness_path, fuzzer_name, fix_counter)
@@ -283,68 +283,4 @@ class CompilerWraper(Compiler):
                     # build_msg += f"//   {driver}\n"
             # provide suggestion let the LLM handle it
             return {"messages": ("user", CompileResults.MissingHeaderError.value), "build_msg": build_msg, "fuzzer_name": fuzzer_name, "fuzzer_path": harness_path}
-
-        # # save the harness code to current output directory
-        # save_code_to_file(state["harness_code"], self.save_dir / "harness.txt")
-      
-        # # if self.counter > self.max_compile:
-        #     # log_if_exists(self.logger, f"Max compile times reached for {self.new_project_name}:{self.project_harness_name}", logger_level=logging.INFO)
-        #     # return {"messages": END}
-
-        # for i, (fuzzer_name, harness_path) in enumerate(self.harness_dict.items()):
-            
-        #     if i < self.start_index:
-        #         continue
-
-        #     self.logger.info(f'Compile Start for draft_fix{fix_count} using {fuzzer_name}.')
-        #     # compile the harness file
-        #     compile_res, all_msg = super().compile(state["harness_code"], harness_path, fuzzer_name)
-
-        #     self.logger.info(f'Compile End for draft_fix{fix_count} using {fuzzer_name}. Res: {compile_res}')
-
-        #     save_code_to_file(all_msg, self.save_dir / f"build_{fix_count}.log")
-
-        #     # Project realted error, No need to continue
-        #     if compile_res in [CompileResults.ImageError, CompileResults.FuzzerError]:
-        #         return {"messages": ("user", END + compile_res.value)}
-            
-        #     # compile error
-        #     elif compile_res == CompileResults.CodeError:
-        #         # extract error msg
-        #         error_msg = self.extract_error_msg(all_msg)
-        #         save_code_to_file(error_msg, self.save_dir / f"build_error_{fix_count}.log")
-
-        #         # no compile enhance, return directly
-        #         if not self.compile_enhance:
-        #             # save raw error message
-        #             return {"messages": ("user", compile_res.value), "build_msg": error_msg, "fuzzer_name": fuzzer_name, "fuzzer_path": harness_path}
-
-        #         if  self.is_link_error(error_msg, harness_path):
-        #                # link error, try next harness
-        #             self.logger.error(f"Link Error for draft_fix{fix_count} using {fuzzer_name}, Now try another harness file.")
-        #             self.start_index = i+1
-        #         elif self.is_include_error(error_msg):
-        #             # include error, try next harness
-        #             pass
-        #         elif self.is_missing_header_error(error_msg):
-        #             pass 
-        #         else:
-        #             # save raw error message
-        #             return {"messages": ("user", compile_res.value), "build_msg": error_msg, "fuzzer_name": fuzzer_name, "fuzzer_path": harness_path}
-                
-                 
-        #     # compile success
-        #     else:
-        #         return {"messages": ("user", CompileResults.Success.value), "build_msg": all_msg, "fuzzer_name": fuzzer_name, "fuzzer_path": harness_path}
-
-        # # tried all harness, Unable to fix, let the LLM try 
-        # self.start_index = 0 # reset for next time, it will try all harness again
-        # fuzzer_name, harness_path = list(self.harness_dict.items())[0]      
-        # compile_res, all_msg = super().compile(state["harness_code"], harness_path, fuzzer_name)
-        # error_msg = self.extract_error_msg(all_msg)
-        # save_code_to_file(error_msg, self.save_dir / f"build_error_{fix_count}.log")
-        # save_code_to_file(all_msg, self.save_dir / f"build_{fix_count}.log")
-        # # save raw error message
-        # return {"messages": ("user", CompileResults.CodeError.value), "build_msg": error_msg, "fuzzer_name": fuzzer_name, "fuzzer_path": harness_path}
-
-
+     
