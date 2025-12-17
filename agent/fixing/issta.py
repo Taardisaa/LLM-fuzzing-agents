@@ -1,4 +1,4 @@
-from harness_agent.fixing.raw import FixerPromptBuilder
+from agent.fixing.raw import FixerPromptBuilder
 
 from constants import LanguageType, Retriever
 from agent_tools.code_retriever import CodeRetriever

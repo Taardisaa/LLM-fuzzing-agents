@@ -131,12 +131,12 @@ if __name__ == "__main__":
     
     file_path = "/home/yk/code/LLM-reasoning-agents/test/ExampleFuzzer.java"
     extractor = JavaParser(Path(file_path))
-    if extractor.exist_function_definition("parse"):
+    if extractor.is_function_defined("parse"):
         print("Fuzz function is faked.")
     else:
         print("Fuzz function is NOT Faked.")
 
-    if extractor.is_fuzz_function_called("parse"):
+    if extractor.is_function_called("parse"):
         print("Fuzz function is called.")
     else:
         print("Fuzz function is NOT called.")

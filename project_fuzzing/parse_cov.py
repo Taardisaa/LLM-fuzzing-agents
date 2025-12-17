@@ -144,7 +144,7 @@ def filter_functions(functions: list[FunctionInfo], project: str) -> list[Functi
     #             if not any(f.source_file.startswith(p) for p in system_prefixes)]
     
     # not start with /src/
-    result = [f for f in result  if f.source_file.startswith('/src/{}'.format(project))]
+    result = [f for f in result  if f.source_file.startswith('/src/{}/'.format(project))]
     
     # remove third party libraries
     # third_party_indicators = ('third_party/', 'external/', 'bazel-', 'googlemock', 'googletest', 'gtest/', 'gmock/', "fuzz", "fuzzers")

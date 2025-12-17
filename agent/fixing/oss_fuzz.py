@@ -5,7 +5,7 @@ from typing import Optional
 from bench_cfg import BenchConfig
 from ossfuzz_gen import benchmark as benchmarklib
 from utils.misc import add_lineno_to_code
-from harness_agent.fixing.raw import FixerPromptBuilder
+from agent.fixing.raw import FixerPromptBuilder
 from ossfuzz_gen.build_runner import FuzzingLogParser
 from ossfuzz_gen import code_fixer as oss_fuzz_code_fixer
 

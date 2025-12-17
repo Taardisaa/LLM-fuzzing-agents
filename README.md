@@ -105,7 +105,7 @@ The target function should follow the yaml format the same as the OSS-Fuzz-Gen, 
 Run the main agent pipeline:
 
 ```bash
-python -m src.run
+python -m harness_agent.run_generation
 ```
 
 This will execute the default harness generation agent configured in `run.py`.
@@ -116,7 +116,7 @@ This will execute the default harness generation agent configured in `run.py`.
 The will evalute the generate harness by runing more time and save the corpus for fine-grained target function coverage collection.
 
 ```bash
-python -m harness_agent.evaluation.evaluation
+python -m harness_agent.evaluation
 ```
 
 ## Workflow

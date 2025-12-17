@@ -133,7 +133,7 @@ def remove_evaluation(eval_path: Path):
                     print(f"wrong path evaluation dir: {work_path}")
                     continue
                 if not (work_path / "cov.txt").exists():
-                    # shutil.rmtree(work_path)
+                    shutil.rmtree(work_path)
                     print(f"Removed evaluation dir: {work_path}")
                     count += 1
     print(f"Total removed evaluation dirs: {count}")
@@ -213,18 +213,18 @@ def filter_eval_projects(save_path: Path, eval_path: Path, threshold: int = 50):
         return
     
     # load all eval projects
-    removed_keys: list[str] = []
+    keep_keys: list[str] = []
     with open(eval_file, 'r') as f:
         eval_data = json.load(f)
         for key, (init_cov, final_cov) in eval_data.items():
-            if final_cov - init_cov < threshold:
-                removed_keys.append(key)
+            if final_cov - init_cov >= threshold:
+                keep_keys.append(key)
 
     filtered_data: dict[str, Any] = {}
     with open(success_file, 'r') as f:
         success_data = json.load(f)
         for key, value in success_data.items():
-            if key not in removed_keys:
+            if key in keep_keys:
                 filtered_data[key] = value
 
     print(f"Remain  {len(filtered_data.keys())} functions above threshold {threshold}.")
@@ -234,13 +234,13 @@ def filter_eval_projects(save_path: Path, eval_path: Path, threshold: int = 50):
 
 
 
-# remove_failed_dir("/home/yk/code/LLM-reasoning-agents/outputs_wild/gpt5-mini/agent")
+remove_failed_dir("/home/yk/code/LLM-reasoning-agents/outputs/projects/gpt5-mini/expat")
 # remove_empty_cache("/home/yk/code/LLM-reasoning-agents/cache")
-# remove_evaluation(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/agent"))
+# remove_evaluation(Path("/home/yk/code/LLM-reasoning-agents/outputs/projects/evaluation/gpt5-mini/libxml2"))
 # Example usage
 # remove_corpus_dir("/home/yk/code/LLM-reasoning-agents/outputs_wild")
 # remove_large_log_files("/home/yk/code/LLM-reasoning-agents/outputs_wild")
 # remove_run_dir("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/agent", n_run=2)
-filter_eval_projects(Path("/home/yk/code/LLM-reasoning-agents/outputs/wild/gpt5-mini/agent"),
-                     Path("/home/yk/code/LLM-reasoning-agents/outputs/evaluation/gpt5-mini/agent"),
-                     threshold=50)
+# filter_eval_projects(Path("/home/yk/code/LLM-reasoning-agents/outputs/projects/gpt5-mini/libxml2/"),
+                    #  Path("/home/yk/code/LLM-reasoning-agents/outputs/projects/evaluation/gpt5-mini/libxml2/"),
+                    #  threshold=10)

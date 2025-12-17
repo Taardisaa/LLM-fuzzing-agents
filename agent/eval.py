@@ -4,7 +4,7 @@ import os
 from math import ceil
 from agent_tools.fuzz_tools.run_fuzzer import FuzzerRunner
 from agent_tools.fuzz_tools.compiler import Compiler
-from harness_agent.modules.fuzzenv import FuzzENV
+from agent.modules.fuzzenv import FuzzENV
 from bench_cfg import BenchConfig
 from pathlib import Path
 from constants import CompileResults, ValResult, PROJECT_PATH
@@ -138,7 +138,7 @@ def run_evaluation(output_path: Path, benchcfg:BenchConfig, n_run:int=1, n_parti
     num_processes = (total_core // 3 *2)  # type: ignore
     # if benchcfg.num_processes is not None:
         # num_processes = min(benchcfg.num_processes, num_processes) # type: ignore
-    num_processes = benchcfg.num_processes if benchcfg.num_processes is not None else num_processes
+    num_processes = benchcfg.num_processes if benchcfg.num_processes is not None else num_processes # type: ignore
     res_json = output_path / f"success_functions_{n_run}.json"
     if not res_json.exists():
         print(f"No success_functions_{n_run}.json found in {output_path.parent}, exit.")

@@ -170,4 +170,6 @@ cache_all/
 test/
 paperdata/
 yunfiles/
+benchmark-sets.tar.gz
+project_fuzzing/projects/*
 .gitignore

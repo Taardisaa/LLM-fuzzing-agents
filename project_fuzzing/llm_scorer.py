@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import Optional
 import openai
+from typing import Any
+
 SCORE_PROMPT = """You are an expert in fuzzing and security testing. Analyze this function and assign a score from 0-10 based on its value as a fuzz target.
 
 SCORING CRITERIA:
@@ -53,6 +55,7 @@ Score 0 (Not Suitable):
 Return JSON only:
 {{"score": <0-10>, "reason": "<brief explanation>"}}
 
+Project: {project}
 Function: {name}
 Source code: {source_code}
 """
@@ -66,7 +69,8 @@ class LLMName(Enum):
 class CoverageScorer:
     """Score functions using LLM."""
     
-    def __init__(self, model: str = "gpt-5-mini"):
+    def __init__(self, project: str, model: str = "gpt-5-mini"):
+        self.project = project
         self.model = model
         self.setup_client()
 
@@ -83,7 +87,7 @@ class CoverageScorer:
             print("[!] OpenAI client initialization error:", e)
             return None
 
-    def _parse_score_response(self, content: str) -> dict:
+    def _parse_score_response(self, content: str) -> dict[str, Any]:
         """Parse score and reason from LLM response JSON.
         
         Args:
@@ -108,12 +112,23 @@ class CoverageScorer:
         
         print(f"[-] Failed to parse LLM response: {content}")
         return {'score': -1, 'reason': 'Parse error'}
-     
-    def score(self, func: dict) -> dict:
+    
+    def truncate_source(self, source_code: str, max_length: int = 100) -> str:
+        code_list = source_code.splitlines()
+        # limit to first 30 lines
+        if len(code_list) > max_length:
+            code_list = code_list[:max_length]
+            code_list.append("... [truncated]")
+        source_code_str = "\n".join(code_list)
+        return source_code_str
+    
+    def score(self, func: dict[str, Any]) -> dict[str, Any]:
         """Score using LLM API."""
+        source_code = func.get('source_code', '')
         prompt = SCORE_PROMPT.format(
-            name=func.get('clean_name', func.get('name', '')),
-            source_code=func.get('source_code', ''),
+            project=self.project,
+            name=func.get('name', ""),
+            source_code=self.truncate_source(source_code),
         )
         
         for _ in range(3):  # retry up to 3 times
@@ -139,9 +154,9 @@ class CoverageScorer:
         func['reason'] = "LLM scoring failed, pass"
         return func
     
-    def score_all_individual(self, functions: list[dict], 
+    def score_all_individual(self, functions: list[dict[str, Any]], 
                     limit: int = 100, 
-                    delay: float = 0.3) -> list[dict]:
+                    delay: float = 0.3) -> list[dict[str, Any]]:
         """Score multiple functions using individual API calls."""
         to_score = functions[:limit]
         
@@ -156,7 +171,7 @@ class CoverageScorer:
         to_score.sort(key=lambda f: f.get('score', 0), reverse=True)
         return to_score
 
-    def submit_batch(self, functions: list[dict], 
+    def submit_batch(self, functions: list[dict[str, Any]], 
                      limit: int = 100,
                      batch_file: Optional[Path] = None) -> str:
         """Submit functions to OpenAI Batch API (50% cheaper).
@@ -172,10 +187,11 @@ class CoverageScorer:
         with open(batch_file, 'w') as f:
             for i, func in enumerate(to_score):
                 prompt = SCORE_PROMPT.format(
-                    name=func.get('clean_name', func.get('name', '')),
-                    source_code=func.get('source_code', ''),
+                    project=self.project,
+                    name=func.get('name', ""),
+                    source_code=self.truncate_source(func.get('source_code', '')),
                 )
-                request = {
+                request: dict[str, Any] = {
                     "custom_id": f"func-{i}",
                     "method": "POST",
                     "url": "/v1/chat/completions",
@@ -207,7 +223,7 @@ class CoverageScorer:
         print(f"[*] Status: {batch.status}")
         
         # Save batch info for later retrieval
-        batch_info = {
+        batch_info: dict[str, Any] = {
             "batch_id": batch.id,
             "input_file_id": file_obj.id,
             "num_functions": len(to_score),
@@ -222,7 +238,7 @@ class CoverageScorer:
         return batch.id
 
     def retrieve_batch(self, batch_id: str, 
-                       functions: list[dict]) -> list[dict]:
+                       functions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Retrieve batch results and apply scores to functions.
         
         Args:
@@ -244,7 +260,7 @@ class CoverageScorer:
             raise RuntimeError("No output file available")
         
         content = self.client.files.content(batch.output_file_id) # type: ignore
-        results = {}
+        results: dict[int, dict[str, Any]] = {}
         
         for line in content.text.strip().split('\n'):
             if not line:
@@ -282,9 +298,11 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Score functions for fuzzing value")
     parser.add_argument("--project", required=True, help="Path to functions.json")
+    parser.add_argument("--cache", default="/home/yk/code/LLM-reasoning-agents/cache/aa_projects", help="Path to lsp function")
     parser.add_argument("--limit", type=int, default=10000)
     parser.add_argument("--model", default="gpt-5-mini")
-    parser.add_argument("--coverage-percent", type=float, default=30.0)
+    parser.add_argument("--coverage-percent", type=float, default=None, help="Only score functions with coverage percent <= this value")
+    parser.add_argument("--execute-count", type=float, default=None, help="Delay between individual API calls (seconds)")
     
     # Batch API options (50% cheaper)
     parser.add_argument("--batch", action="store_true", help="Use Batch API (50% cheaper, async)")
@@ -293,23 +311,24 @@ def main():
     args = parser.parse_args()
    
     # Load functions
-    input_path = Path("/home/yk/code/LLM-reasoning-agents/project_fuzzing/projects") / args.project / "functions.json"
+    input_path = Path(args.cache) / args.project / "All_all_symbols_lsp.json"
     if not os.path.exists(input_path):
         print(f"[-] File not found: {input_path}")
         sys.exit(1)
     
     with open(input_path) as f:
-        data = json.load(f)
-    
-    functions = data.get('functions', [])
-    
-    # Filter if needed
-    if args.coverage_percent:
-        functions = [f for f in functions if f.get('coverage_percent', 0.0) <= args.coverage_percent]
-    
-    scorer = CoverageScorer(model=args.model)
+        functions = json.load(f)
 
-    # Check batch status only
+    # Filter if needed
+    # the following two args are deprecated
+    # use_coverage = args.coverage_percent is not None
+    # use_execute = args.execute_count is not None
+    # if use_coverage:
+    #     functions = [f for f in functions if f.get('coverage_percent', 0.0) <= args.coverage_percent]
+    # if use_execute:
+    #     functions = [f for f in functions if f.get('execution_count', 0.0) <= args.execute_count]
+
+    scorer = CoverageScorer(model=args.model, project=args.project)
 
     # Retrieve existing batch results
     if args.batch_id:
@@ -331,12 +350,14 @@ def main():
     output_path = Path("/home/yk/code/LLM-reasoning-agents/project_fuzzing/projects") / args.project / "functions_scored.json"
     
     # Save
-    output = {
+    output: dict[str, Any] = {
         'project': args.project,
         'model': args.model,
         'total_scored': len(scored),
         'high_value': len([f for f in scored if f.get('score', 0) >= 7]),
-        'functions': scored
+        'functions': scored,
+        'coverage_percent': args.coverage_percent,
+        'execute_count': args.execute_count
     }
     
     # if in batch mode, add batch_id in filename
@@ -359,7 +380,6 @@ def main():
         reason = func.get('reason', '')[:50]
         print(f"  [{score:.1f}] {name[:40]:<40}")
         print(f"        {reason}")
-
 
 if __name__ == "__main__":
     main()

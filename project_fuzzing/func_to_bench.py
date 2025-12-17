@@ -247,6 +247,10 @@ def main():
         total_functions = len(scored_data.get('functions', []))
         print(f"  Found {total_functions} functions")
         
+        #filter static functions
+        # scored_data['functions'] = [f for f in scored_data.get('functions', []) if not f.get('is_static', False)]
+        # print(f"  After filtering static functions: {len(scored_data.get('functions', []))} functions")
+        
         # Step 2: Load symbol signatures
         print("\nStep 2: Loading symbol signatures...")
         symbols = load_symbol_signatures(args.project, args.cache_dir)

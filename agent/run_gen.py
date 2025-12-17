@@ -6,7 +6,7 @@ import yaml
 from multiprocessing import Pool
 from utils.misc import extract_name, get_benchmark_functions
 from utils.oss_fuzz_utils import OSSFuzzUtils
-from harness_agent.generation import ISSTAFuzzer
+from agent.gen import ISSTAFuzzer
 from agent_tools.results_analysis import run_agent_res
 from bench_cfg import BenchConfig
 import traceback  # Add this at the top
@@ -196,7 +196,7 @@ if __name__ == "__main__":
         # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic+header+definition.yaml",
         # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic+header+issta.yaml",
         # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic+header+ossfuzz.yaml"
-        "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/projects/gpt5_mini_agent_libxml2.yaml"
+        "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/projects/gpt5_mini_agent_mosquitto.yaml"
     ]
     for config_path in cfg_list:
         runner = Runner(config_path)
