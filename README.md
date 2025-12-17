@@ -28,7 +28,7 @@ The system supports multiple LLM backends (OpenAI GPT, Claude) and provides conf
 ### Core Components
 
 ```
-├── harness_agent/          # Main agent implementation
+├── agent/          # Main agent implementation
 │   ├── modules/            # Core modules (generator, fixer, validator)
 │   ├── fixing/             # Error fixing strategies (raw, ISSTA, OSS-Fuzz)
 │   ├── header/             # Header file analysis and compilation
@@ -105,7 +105,7 @@ The target function should follow the yaml format the same as the OSS-Fuzz-Gen, 
 Run the main agent pipeline:
 
 ```bash
-python -m harness_agent.run_generation
+python -m agent.run_gen
 ```
 
 This will execute the default harness generation agent configured in `run.py`.
@@ -116,7 +116,7 @@ This will execute the default harness generation agent configured in `run.py`.
 The will evalute the generate harness by runing more time and save the corpus for fine-grained target function coverage collection.
 
 ```bash
-python -m harness_agent.evaluation
+python -m agent.eval
 ```
 
 ## Workflow
