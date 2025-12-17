@@ -47,7 +47,7 @@ def get_run_res(work_dir: Path, semantic_mode: str="eval", language: LanguageTyp
     if semantic_mode in ["both", "eval"]:
         pass_pattern = "Semantic check passed"
     else:
-        pass_pattern = "NoError"
+        pass_pattern = "Fuzz res:No Error"
         
     if pass_pattern not in log_lines:
         return EvalResult.Failed
@@ -232,6 +232,6 @@ if __name__ == "__main__":
     # print(f"Evaluation result: {eval_res}")
     # get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/agent"))
     # get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/raw"))
-    # get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs/evaluation/gpt5-mini/agent"))
-    run_agent_res(Path("/home/yk/code/LLM-reasoning-agents/outputs/wild/gpt5-mini/agent"), semantic_mode="eval", n_run=3)
+    # get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs/projects/evaluation/gpt5-mini/libxml2"))
+    run_agent_res(Path("/home/yk/code/LLM-reasoning-agents/outputs/projects/gpt5-mini/expat"), semantic_mode="gen", n_run=3)
     # run_oss_fuzz_res()

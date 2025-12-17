@@ -328,6 +328,22 @@ class CodeRetriever():
                 deduped_resp.append(item)
 
         self.logger.info(f"Found {len(resp)} {lsp_function.value} for {symbol_name} with {retriever.value} retriever")
+        
+        # find difinition and declaration from all fucntions using LSP
+        if lsp_function in [LSPFunction.Definition, LSPFunction.Declaration] and not deduped_resp:
+            all_functions = self.get_symbol_info("All", LSPFunction.AllSymbols, Retriever.LSP)
+            for func in all_functions:
+                func_name = func.get("name", "")
+                if func_name != symbol_name:
+                    continue
+                deduped_resp.append(
+                    {
+                        "source_code": func.get("source_code", func.get("signature", "")),
+                        "file_path": func.get("file_path", ""),
+                        "line": func.get("line_number", "")
+                    }
+                )
+
         return deduped_resp  # No declaration found
 
     @catch_exception
