@@ -89,7 +89,7 @@ class FuzzerRunner():
 
         log_file_path = self.save_dir / f"fuzzing{counter}.log"
       # Define the error patterns
-        error_patterns = ['ERROR: LeakSanitizer',  'ERROR: libFuzzer:', 'ERROR: AddressSanitizer']
+        error_patterns = ['ERROR: LeakSanitizer',  'ERROR: libFuzzer:', 'ERROR: AddressSanitizer', "== Java Exception"]
         log_file = open(log_file_path, "w", encoding='utf-8', errors='ignore')
         process = None
         reader_thread = None
@@ -109,7 +109,7 @@ class FuzzerRunner():
                 reader_thread.start()
                 
             # Wait for timeout
-            while time.time() - start_time < self.run_timeout+30:  # extra 30 seconds buffer
+            while time.time() - start_time < self.run_timeout+60:  # extra 60 seconds buffer
                 if process.poll() is not None:
                     break
                 time.sleep(10)  # Check every 10 seconds

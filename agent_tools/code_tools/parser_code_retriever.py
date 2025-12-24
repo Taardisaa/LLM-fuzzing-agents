@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any
 
 class ParserCodeRetriever():
-    def __init__(self, project_name: str, workdir: str,  project_lang: LanguageType, symbol_name: str, lsp_function: LSPFunction, max_try: int = 100):
+    def __init__(self, project_name: str, workdir: str,  project_lang: LanguageType,
+                  symbol_name: str, lsp_function: LSPFunction, max_try: int = 100):
         self.project_name = project_name
         self.project_root = workdir
         self.symbol_name = symbol_name
@@ -237,10 +238,22 @@ class ParserCodeRetriever():
         """Find all header files"""
         header_files: list[Path] = []
         # Include all supported file types if no specific language is specified
-        patterns = ["**/*.h", "**/*.hpp", "**/*.hh", "**/*.hxx", "**/*.c", "**/*.cpp",
-                     "**/*.cc", "**/*.cxx", "**/*.c++", "**/*.java", "**/*.py"]
+        
+        if self.project_lang == LanguageType.JAVA:
+            patterns = ["**/*.java"]
+        elif self.project_lang in [LanguageType.C, LanguageType.CPP]:
+            patterns = ["**/*.h", "**/*.hpp", "**/*.hh", "**/*.hxx", "**/*.c", "**/*.cpp",
+                     "**/*.cc", "**/*.cxx", "**/*.c++"]
+        elif self.project_lang == LanguageType.PYTHON:
+            patterns = ["**/*.py"]
+        elif self.project_lang == LanguageType.RUST:
+            patterns = ["**/*.rs"]
+        else:
+            return []
 
         # Find header files in project root
+        # source code are only consider /src/{project_name} or /src/name
+        # for some projects, the project name is not the same as the source path root name like apache-commons-jxpath /src/commons-jxpath 
         for search_dir in [Path(self.project_root), Path("/src/{}".format(self.project_name))]:
             if not search_dir.exists():
                 continue

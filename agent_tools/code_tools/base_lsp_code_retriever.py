@@ -1,9 +1,5 @@
-import json
-import os
-import argparse
 from agent_tools.code_tools.lsp_clients.c_lsp_client import CLSPCLient
 from agent_tools.code_tools.lsp_clients.multi_lsp_client import MultilspyClient
-import asyncio
 from agent_tools.code_tools.parsers.c_parser import CParser
 from agent_tools.code_tools.parsers.cpp_parser import CPPParser
 from agent_tools.code_tools.parsers.java_parser import JavaParser
@@ -11,15 +7,14 @@ from agent_tools.code_tools.parsers.python_parser import PythonParser
 from constants import LanguageType, LSPFunction, LSPResults
 from typing import Any
 from pathlib import Path
-import shutil
-import urllib
 
 class BaseLSPCodeRetriever():
     def __init__(self, workdir: str, project_name: str, project_lang: LanguageType, symbol_name: str, lsp_function: LSPFunction):
    
         self.project_root = workdir
         self.project_name = project_name
-        self.symbol_name = symbol_name
+        # the symbol name could include namespaces for c++ and class path for java
+        self.symbol_name = symbol_name  
         self.lsp_function = lsp_function
         self.project_lang = project_lang
         self.lang_parser = self.get_language_parser()
@@ -32,7 +27,7 @@ class BaseLSPCodeRetriever():
             return CPPParser
         elif self.project_lang == LanguageType.JAVA:
             return JavaParser
-        elif self.project_lang == LanguageType.Python:
+        elif self.project_lang == LanguageType.PYTHON:
             return PythonParser
         else:
             raise Exception(f"Language {self.project_lang} not supported.")
@@ -55,21 +50,25 @@ class BaseLSPCodeRetriever():
             return [{"source_code": source_code, "file_path": file_path, "type": query_key, "start_line": start_line}]
       
         # for declaration and definition, we need to get the symbol name without namespace
+        simplifed_name = self.symbol_name
+        # for c++, remove the namespace
         if "::" in self.symbol_name:
-            symbol_name = self.symbol_name.split("::")[-1]
-        else:
-            symbol_name = self.symbol_name
+            simplifed_name = self.symbol_name.split("::")[-1]
+        # for java, remove the class path
+        elif "." in self.symbol_name:
+            simplifed_name = self.symbol_name.split(".")[-1]
+
         # since we have match the namespace when finding the symbol, there is no need to match the namespace again
         # the namespace matching in the parser sometimes will fail, so we just use the symbol name directly
-        query_key, source_code, _ = parser.get_symbol_source(symbol_name, start_line, lsp_function)
+        query_key, source_code, _ = parser.get_symbol_source(self.symbol_name, start_line, lsp_function)
 
         if lsp_function == LSPFunction.Declaration:
             # template header file, return empty
             file_text  = Path(file_path).read_text(encoding="utf-8")
-            if source_code == "" and self.symbol_name not in file_text:
+            if source_code == "" and simplifed_name not in file_text:
                 # if the source code is not found, we will return the full line of the file
                 return []
-            
+           
         # for definition and declaration, if we can't find the source code, we will return 50 lines around the lineno
         # since the location must be correct, the empty source code means the parser failed to find the symbol
         
@@ -85,7 +84,7 @@ class BaseLSPCodeRetriever():
             source_code = "\n".join(lines[start_line:end_line])
 
             # check if the symbol_name is in the source_code, 
-            if symbol_name not in source_code:
+            if simplifed_name not in source_code:
                 return []
 
         return [{"source_code": source_code, "file_path": file_path, "type": query_key, "start_line": start_line}]

@@ -2,6 +2,7 @@ import os
 from constants import EvalResult, LanguageType, PROJECT_PATH
 from collections import defaultdict
 from agent_tools.code_tools.parsers.cpp_parser import CPPParser
+from agent_tools.code_tools.parsers.java_parser import JavaParser 
 from utils.misc import extract_name, get_run_path
 from pathlib import Path
 from typing import DefaultDict
@@ -55,7 +56,12 @@ def get_run_res(work_dir: Path, semantic_mode: str="eval", language: LanguageTyp
     if semantic_mode == "eval" and "Semantic check failed" in log_lines:
         return EvalResult.Failed
 
-    parser = CPPParser(file_path=harness_path)
+    if language in [LanguageType.CPP, LanguageType.C]:
+        parser = CPPParser(file_path=harness_path)
+    elif language == LanguageType.JAVA:
+        parser = JavaParser(file_path=harness_path)
+    else:
+        raise NotImplementedError(f"Language {language} not supported yet.")
 
     if parser.is_function_defined(function_name):
         return EvalResult.Fake
@@ -232,6 +238,6 @@ if __name__ == "__main__":
     # print(f"Evaluation result: {eval_res}")
     # get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/agent"))
     # get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs_evaluation/gpt5-mini/raw"))
-    get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs/projects/evaluation/gpt5-mini/expat"))
-    # run_agent_res(Path("/home/yk/code/LLM-reasoning-agents/outputs/projects/gpt5-mini/expat"), semantic_mode="gen", n_run=3)
+    # get_evaluation_results(Path("/home/yk/code/LLM-reasoning-agents/outputs/projects/evaluation/gpt5-mini/net-snmp"))
+    run_agent_res(Path("/home/yk/code/LLM-reasoning-agents/outputs/java/gpt5-mini/agent"), semantic_mode="gen", n_run=1, language=LanguageType.JAVA)
     # run_oss_fuzz_res()

@@ -80,12 +80,76 @@ class CovCollector():
         return harness_code+"\n"
 
 
+    def gen_wrapped_code_java(self, harness_code: str, function_name: str) -> str:
+        """Generate wrapped Java harness code with coverage instrumentation.
+        
+        Inserts coverage wrapper static fields and methods directly into the fuzzer class.
+        No inner class is used to avoid class file issues in OSS-Fuzz.
+        """
+        wrap_file = Path(f"{PROJECT_PATH}/agent_tools/fuzz_tools/{COV_WRAP_FILE_NAME}_{LanguageType.JAVA.value.lower()}.txt")
+        if not wrap_file.exists():
+            self.logger.error(f"Wrapper file {wrap_file} does not exist") if self.logger else None
+            return harness_code
+        
+        wrap_code = wrap_file.read_text()
+        
+        # Find the fuzz entry function and target function call
+        parser = self.parser(None, harness_code)
+        fuzz_node = parser.get_fuzz_function_node(function_name, expression_flag=True)
+        if not fuzz_node:
+            fuzz_node = parser.get_fuzz_function_node(function_name)
+
+        if fuzz_node:
+            fuzz_start_row, fuzz_start_col, fuzz_end_row = fuzz_node.start_point.row, fuzz_node.start_point.column, fuzz_node.end_point.row
+        else:
+            self.logger.error(f"Fuzz function {function_name} not found") if self.logger else None
+            raise Exception(f"Fuzz function {function_name} not found")
+        
+        lines = harness_code.splitlines()
+        indent = " " * fuzz_start_col
+
+        # Add coverage save after target function, reset before
+        # Note: methods are now directly in the class, not in CoverageWrapper
+        lines.insert(fuzz_end_row + 1, f"{indent}saveSancovCounters();")
+        lines.insert(fuzz_start_row, f"{indent}resetSancovCounters();")
+
+        # Find the fuzzer class and insert coverage wrapper fields/methods directly
+        # Look for the class body opening brace
+        class_body_start = -1
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if ("public class" in stripped or "class " in stripped) and "{" in stripped:
+                class_body_start = i
+                break
+            elif ("public class" in stripped or "class " in stripped):
+                # Class declaration without brace on same line, find the brace
+                for j in range(i + 1, len(lines)):
+                    if "{" in lines[j]:
+                        class_body_start = j
+                        break
+                break
+        
+        if class_body_start == -1:
+            self.logger.error("Could not find fuzzer class body") if self.logger else None
+            raise Exception("Could not find fuzzer class body to insert coverage wrapper")
+        
+        # Indent the wrapper code to be inside the class (add 4 spaces to each line)
+        indented_wrap_code = "\n".join("    " + line if line.strip() else line for line in wrap_code.splitlines())
+        
+        # Insert the wrapper fields/methods right after the class opening brace
+        lines.insert(class_body_start + 1, "\n" + indented_wrap_code + "\n")
+        
+        harness_code = "\n".join(lines)
+        return harness_code + "\n"
+
     def recompile(self, harness_code: str,  harness_path: Path, fuzzer_name: str, function_name: str) -> bool:
         
         harness_lang = get_ext_lang(harness_path)
 
         if harness_lang in [LanguageType.C, LanguageType.CPP]:
             wrapped_code = self.gen_wrapped_code(harness_code, function_name, harness_lang)
+        elif harness_lang == LanguageType.JAVA:
+            wrapped_code = self.gen_wrapped_code_java(harness_code, function_name)
         else:
             self.logger.error(f"Language {harness_lang} not supported for now") if self.logger else None
             raise Exception(f"Language {harness_lang} not supported for now")
@@ -126,12 +190,20 @@ class CovCollector():
             self.logger.error(f"Recompile error: {flag}") if self.logger else None
             return 0, 0, False
         # run the call back
-        cmd = ["python", "cov_c.py", "--fuzzer-name", fuzzer_name, 
-                "--corpus-dir", "./corpora/"]
+        if self.project_lang in [LanguageType.C, LanguageType.CPP]:
+            cov_file = "cov_c.py"
+        elif self.project_lang == LanguageType.JAVA:
+            cov_file = "cov_jvm.py"
+        else:
+            self.logger.error(f"Language {self.project_lang} not supported for coverage collection") if self.logger else None
+            return 0, 0, False
+
+        cmd = ["python", cov_file, "--fuzzer-name", fuzzer_name, "--corpus-dir", "./corpora/"]
         local_out =  Path(self.oss_fuzz_dir) / "build" / "out" / self.new_project_name
 
         # copy the cov_c.py to the out directory
-        shutil.copy(Path(PROJECT_PATH) / "agent_tools" / "fuzz_tools" / "cov_c.py", local_out / "cov_c.py")
+        shutil.copy(Path(PROJECT_PATH) / "agent_tools" / "fuzz_tools" / cov_file, local_out / cov_file)
+        
         # shutil.copy(Path(PROJECT_PATH) / "agent_tools" / "fuzz_tools" / "cov_wrap_code_c.txt", local_out / "cov_wrap_code_c.txt")
         volumes = {local_out: {"bind": "/out", "mode": "rw"},
                    corpora_dir: {"bind": "/out/corpora", "mode": "rw"}}
@@ -161,8 +233,6 @@ class CovCollector():
             else:
                 return init_cov, final_cov, False
             
-
-
 if __name__ == "__main__":
 
     # test the cov collector

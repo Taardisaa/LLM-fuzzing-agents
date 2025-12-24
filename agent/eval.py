@@ -1,4 +1,3 @@
-import ast
 import json
 import os
 from math import ceil
@@ -13,7 +12,7 @@ from agent_tools.fuzz_tools.cov_collecter import CovCollector
 import multiprocessing
 import psutil
 import shutil
-import re
+from utils.misc import extract_fuzzer_name
 
 class HarnessEval(FuzzENV):
     def __init__(self,  benchcfg: BenchConfig, function_signature: str, project_name: str, local_harness: Path, n_run: int=1):
@@ -56,54 +55,37 @@ class HarnessEval(FuzzENV):
         corpus_dir = Path(self.save_dir) / "corpora"
         function_name = extract_name(self.function_signature, keep_namespace=True, exception_flag=False, language=self.project_lang)
         # init the cov collector
-        cov_collector = CovCollector(self.benchcfg.oss_fuzz_dir, self.benchcfg.benchmark_dir, self.project_name, self.new_project_name, self.project_lang, self.logger)
+        cov_collector = CovCollector(self.benchcfg.oss_fuzz_dir, self.benchcfg.benchmark_dir, self.project_name,
+                                      self.new_project_name, self.project_lang, self.logger)
         # collect the coverage
         init_cov, final_cov, changed = cov_collector.collect_coverage(self.harness_code, harness_path, fuzzer_name, function_name, corpus_dir)
         
         return init_cov, final_cov, changed
 
 
-def extract_fuzzer_name(log_lines: list[str]) -> tuple[str, str]:
-    fuzzer_name = ""
-    for line in log_lines[::-1]:
-        if "Fuzz res:No Error" not in line:
-            continue
-
-        # found the line
-        # Fuzz res:No Error, [] for run2_tqjzjancxhnbfnka:xml_parse_fuzzer_UTF-16LE (validation.py:62)'
-        match = re.search(r'run\d+_\w+:([\w-]+)\s*\(', line)
-        if match:
-            fuzzer_name = match.group(1)
-        assert fuzzer_name != "", f"Could not extract fuzzer name from line: {line}"
-        break
-
-    #{'ssh_privkey_fuzzer': '/src/libssh/tests/fuzz/ssh_privkey_fuzzer.c'}
-    for line in log_lines[::-1]:
-        if "harness_fuzzer_pairs" not in line:
-            continue
-        match = re.search(r'content:(\{.*\})', line)
-        if match:
-            fuzzer_data = ast.literal_eval(match.group(1))
-            if fuzzer_name in fuzzer_data.keys():
-                return fuzzer_name, fuzzer_data[fuzzer_name]
-        # obtain the string between {}
-        print(f"Could not find fuzzer harness pairs in line: {line}")
-    return fuzzer_name.strip(), ""
 
 def process_single_result(args: tuple[str, str, Path, BenchConfig]): # type: ignore
     """Process a single project/function/workdir combination"""
     project_name, function_signature, work_dir, benchcfg = args # type: ignore
     local_harness_file = work_dir / "harness.txt"
     
-    # read the agent log
-    agent_log_file = work_dir / "agent.log"
-    log_lines = agent_log_file.read_text().splitlines()
-  
-    fuzzer_name, remote_harness_path = extract_fuzzer_name(log_lines)
+    fuzzer_info_file = work_dir / "fuzzer_info.json"
+    if not fuzzer_info_file.exists():
+        # read the agent log
+        agent_log_file = work_dir / "agent.log"
+        log_lines = agent_log_file.read_text().splitlines()
+        # read the fuzzer name and harness path
+        fuzzer_name, remote_harness_path = extract_fuzzer_name(log_lines)
+    else:
+        with open(fuzzer_info_file, "r") as f:
+            fuzzer_info = json.load(f)
+        fuzzer_name = fuzzer_info["fuzzer_name"]
+        remote_harness_path = fuzzer_info["fuzzer_path"]
+
     if fuzzer_name == "" or remote_harness_path == "":
-        print(f"Could not extract fuzzer name from log: {agent_log_file}")
+        print(f"Fuzzer info incomplete in file: {fuzzer_info_file}")
         return project_name, function_signature, 0, 0
-    
+
     include_file = work_dir / "include_path.txt"
     include_path_set: set[str] = set()
     if include_file.exists():
@@ -179,9 +161,9 @@ if __name__ == "__main__":
     from argparse import ArgumentParser
 
     parser  = ArgumentParser(description="Run harness evaluation in parallel.")
-    parser.add_argument("--output_path", type=str, default=f"{PROJECT_PATH}/outputs/projects/gpt5-mini/libmodbus", help="Path to the output directory containing success_functions.json")
-    parser.add_argument("--benchcfg_path", type=str, default=f"{PROJECT_PATH}/cfg/gpt5_mini/projects/libmodbus_eval.yaml", help="Path to the benchmark configuration YAML file")
-    parser.add_argument("--n_run", type=int, default=3, help="Run number corresponding to success_functions_{n_run}.json")
+    parser.add_argument("--output_path", type=str, default=f"{PROJECT_PATH}/outputs/java/gpt5-mini/agent", help="Path to the output directory containing success_functions.json")
+    parser.add_argument("--benchcfg_path", type=str, default=f"{PROJECT_PATH}/cfg/gpt5_mini/java_eval.yaml", help="Path to the benchmark configuration YAML file")
+    parser.add_argument("--n_run", type=int, default=1, help="Run number corresponding to success_functions_{n_run}.json")
     parser.add_argument("--n_partitations", type=int, default=1, help="Total number of partitions to divide the workload into.")
     parser.add_argument("--partitation_id", type=int, default=0, help="ID of the partition to process (0-indexed).")
     args = parser.parse_args()

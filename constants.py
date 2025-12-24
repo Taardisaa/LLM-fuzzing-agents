@@ -31,9 +31,9 @@ class LanguageType(Enum):
     C = 'C'
     CPP = 'CPP'
     JAVA = 'JVM'
-    Python = 'Python'
-    Go = 'Go'
-    Rust = "Rust"
+    PYTHON = 'PYTHON'
+    GO = 'GO'
+    RUST = "RUST"
     NONE = ''
 
 class LSPFunction(Enum):

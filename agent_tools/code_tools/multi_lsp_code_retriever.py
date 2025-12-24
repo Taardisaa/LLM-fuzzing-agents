@@ -1,11 +1,5 @@
-from urllib import response
-from multilspy import LanguageServer
-from multilspy.multilspy_config import MultilspyConfig
-from multilspy.multilspy_logger import MultilspyLogger
 from constants import LanguageType, LSPFunction
-import subprocess as sp
 from typing import Any
-import urllib
 from agent_tools.code_tools.base_lsp_code_retriever import BaseLSPCodeRetriever
 from pathlib import Path
 
@@ -15,7 +9,17 @@ class MultiLSPCodeRetriever(BaseLSPCodeRetriever):
 
     
     def fectch_code_from_response(self, response: list[dict[str, Any]], lsp_function: LSPFunction) -> list[dict[str, Any]]:
-        return []
+        # [{'uri': 'file:///src/commons-jxpath/src/main/java/org/apache/commons/jxpath/FunctionLibrary.java', 
+        # 'range': {'start': {'line': 95, 'character': 44}, 'end': {'line': 95, 'character': 84}},
+        #  'absolutePath': '/src/commons-jxpath/src/main/java/org/apache/commons/jxpath/FunctionLibrary.java', 
+        # 'relativePath': 'src/main/java/org/apache/commons/jxpath/FunctionLibrary.java'},
+        res_list: list[dict[str, Any]] = []
+        for item in response:
+            # file_path = urllib.parse.urlparse(item['uri']).path
+            code_json = self.fectch_code(item["absolutePath"], item["range"]["start"]["line"], lsp_function)
+            res_list.extend(code_json)
+
+        return res_list
        
 
     async def request_function(self, file_path: str, start_line: int, end_line: int, charpos: int) -> list[dict[str, Any]]:

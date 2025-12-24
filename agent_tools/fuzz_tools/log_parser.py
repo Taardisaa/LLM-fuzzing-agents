@@ -91,6 +91,19 @@ class FuzzLogParser():
         self.project_lang = project_lang
         # self.compile_error_extractor = CompileErrorExtractor(project_lang)
 
+    def is_stack_frame(self, index: int, line: str) -> bool:
+
+        if self.project_lang in [LanguageType.C, LanguageType.CPP]:
+            pattern = f"#{index} 0x"
+            return pattern in line
+
+        if self.project_lang == LanguageType.JAVA:
+            pattern = ["Caused by:", "at "]
+            return any(p in line for p in pattern)
+        
+        raise ValueError(f"Unsupported language: {self.project_lang}")
+        return False
+    
     def parse_log(self, log_file: Path)-> tuple[ValResult, list[str], list[list[str]]]:
         try:
             with open(log_file, "r", encoding="utf-8", errors='ignore') as file:
@@ -106,7 +119,7 @@ class FuzzLogParser():
         # This only test on libfuzzer for c/c++ project
 
         # Define the error patterns
-        error_patterns = ['ERROR: LeakSanitizer',  'ERROR: libFuzzer:', 'ERROR: AddressSanitizer']
+        error_patterns = ['ERROR: LeakSanitizer',  'ERROR: libFuzzer:', 'ERROR: AddressSanitizer', "== Java Exception"]
         
         if any(error_pattern in log for error_pattern in error_patterns):
             error_type_line:list[str] = []
@@ -119,7 +132,7 @@ class FuzzLogParser():
                 if any(error_pattern in line for error_pattern in error_patterns):
                     error_type_line.append(line)
 
-                if f"#{stack_index} 0x" in line:
+                if self.is_stack_frame(stack_index, line):
                     stack_index += 1
                     one_stack.append(line)
                 # if the index break, it means the stack is finished

@@ -166,7 +166,7 @@ results/
 benchmark-sets/
 !benchmark-sets/function_0/
 cache/
-cache_all/
+cache*/
 test/
 paperdata/
 yunfiles/

@@ -83,10 +83,13 @@ class JavaParser(BaseParser):
 
     # for java, the identifier is only one level deep 
     def get_identifier_node(self, root_node:Node, symbol_name: str) -> Optional[Node]:
+        '''symbol_name: could be qualified name with class path'''
+        # the full path is not used here, only the last name is used for matching
+        simplified_name = symbol_name.split('.')[-1]
         for child in root_node.children:
             if child.type != "identifier":
                 continue
-            if child.text and child.text.decode("utf-8", errors="ignore") == symbol_name:
+            if child.text and child.text.decode("utf-8", errors="ignore") == simplified_name:
                 return child    
         return None
     

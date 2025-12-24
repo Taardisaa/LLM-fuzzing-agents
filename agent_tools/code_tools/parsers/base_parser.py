@@ -162,7 +162,10 @@ class BaseParser:
         raise NotImplementedError("This method should be implemented in subclasses.")
     
     def get_ref_source(self, symbol_name: str, line: int) -> str:
-
+        '''
+        symbol_name: the symbol name could include namespace or class path
+        '''
+        
         # find the callee node
         callee_node = None
         query = self.parser_language.query(f"({self.call_func_name}) @func_call")

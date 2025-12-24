@@ -208,7 +208,7 @@ class CodeRetriever():
             pyfile = "lsp_code_retriever"
         elif retriever == Retriever.Parser:
             pyfile = "parser_code_retriever"
-            workdir = "/src"  # for parser, we need to set the workdir to /src
+            # workdir = "/src"  # for parser, we need to set the workdir to /src
         else:
             self.logger.error(f"Error: {retriever} is not supported")
             return []
@@ -219,6 +219,8 @@ class CodeRetriever():
         # Use exec_in_container instead of run_cmd
         if lsp_function == LSPFunction.AllSymbols:
             timeout = 300  # Increase timeout for all symbols:
+        elif self.project_lang == LanguageType.JAVA:
+            timeout = 120  # Increase timeout for Java
         else:
             timeout = 60  # Default timeout for other functions
 
@@ -284,6 +286,47 @@ class CodeRetriever():
         symbol_name = symbol_name.strip()
         return symbol_name
     
+    def preprocess_symbol_name_java(self, symbol_name: str) -> str:
+        """
+        Preprocess the symbol name to extract the actual symbol name for Java.
+        Args:
+            symbol_name (str): The raw symbol name.
+        Returns:
+            str: The processed symbol name.
+        """
+        if "(" in symbol_name:
+            symbol_name = symbol_name.split("(")[0]
+        symbol_name = symbol_name.strip()
+        return symbol_name
+    
+    def match_namespace(self, symbol_name: str, func_name:str, namespace:str) -> bool:
+        """
+        Match the namespace of the symbol name.
+        Args:
+            symbol_name (str): The raw symbol name.
+            func_name (str): The function name extracted from the symbol name.
+            namespace (str): The namespace to match.
+        Returns:
+            bool: True if the namespace matches, False otherwise.
+        """
+       
+        symbol_namespace = namespace
+        simplified_name = symbol_name
+        if self.project_lang in [LanguageType.CPP, LanguageType.C] and "::" in symbol_name:
+            # check if the symbol_name contains namespace
+            namespace_parts = symbol_name.split("::")
+            symbol_namespace = namespace_parts[-2]
+            simplified_name = namespace_parts[-1]
+
+        elif  self.project_lang == LanguageType.JAVA and "." in symbol_name:
+            namespace_parts = symbol_name.split(".")
+            symbol_namespace = namespace_parts[-2]
+            simplified_name = namespace_parts[-1]
+
+        if symbol_namespace == namespace and func_name == simplified_name:
+            return True
+        return False
+    
     @catch_exception
     def get_symbol_info(self, symbol_name: str, lsp_function: LSPFunction, retriever: Retriever = Retriever.Mixed) -> list[dict[str, Any]]:
         """
@@ -298,6 +341,8 @@ class CodeRetriever():
         # the LLM may pass the whole fuinction signature, we need to extract the symbol name
         if self.project_lang in [LanguageType.CPP, LanguageType.C]:
             symbol_name = self.preprocess_symbol_name_cpp(symbol_name)
+        elif self.project_lang == LanguageType.JAVA:
+            symbol_name = self.preprocess_symbol_name_java(symbol_name)
 
         if symbol_name == "":
             self.logger.error("Error: symbol_name is empty!")
@@ -331,10 +376,15 @@ class CodeRetriever():
         
         # find difinition and declaration from all fucntions using LSP
         if lsp_function in [LSPFunction.Definition, LSPFunction.Declaration] and not deduped_resp:
-            all_functions = self.get_symbol_info("All", LSPFunction.AllSymbols, Retriever.LSP)
+            if self.project_lang in [LanguageType.CPP, LanguageType.C]:
+                all_functions = self.get_symbol_info("All", LSPFunction.AllSymbols, Retriever.LSP)
+            else:
+                all_functions = self.get_symbol_info("All", LSPFunction.AllSymbols, Retriever.Parser)
+
             for func in all_functions:
                 func_name = func.get("name", "")
-                if func_name != symbol_name:
+                namespace = func.get("namespace", "")
+                if self.match_namespace(symbol_name, func_name, namespace):
                     continue
                 deduped_resp.append(
                     {

@@ -37,4 +37,7 @@ public class ExampleFuzzer {{
     }}
 }}
 
+If a target method requires an Interface or Abstract Class, prioritize finding and using an existing concrete implementation from the library 
+(e.g., look for classes named Default..., Basic..., or Simple...). DO NOT create custom mocks or inner classes
+
 Output the full driver code in reply.

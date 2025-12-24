@@ -1,3 +1,4 @@
+import ast
 import os
 from matplotlib import pyplot as plt
 import io
@@ -519,6 +520,42 @@ def get_run_path(save_dir:Path, n_run:int=1) -> list[Path]:
 
     return run_list
 
+
+def extract_fuzzer_name(log_lines: list[str]) -> tuple[str, str]:
+    '''
+    extract fuzzer name and harness path from the agent log lines. 
+    This is used for old projects where the fuzzer information is not saved.
+    
+    :param log_lines: Description
+    :type log_lines: list[str]
+    :return: Description
+    :rtype: tuple[str, str]
+    '''
+    fuzzer_name = ""
+    for line in log_lines[::-1]:
+        if "Fuzz res:No Error" not in line:
+            continue
+
+        # found the line
+        # Fuzz res:No Error, [] for run2_tqjzjancxhnbfnka:xml_parse_fuzzer_UTF-16LE (validation.py:62)'
+        match = re.search(r'run\d+_\w+:([\w-]+)\s*\(', line)
+        if match:
+            fuzzer_name = match.group(1)
+        assert fuzzer_name != "", f"Could not extract fuzzer name from line: {line}"
+        break
+
+    #{'ssh_privkey_fuzzer': '/src/libssh/tests/fuzz/ssh_privkey_fuzzer.c'}
+    for line in log_lines[::-1]:
+        if "harness_fuzzer_pairs" not in line:
+            continue
+        match = re.search(r'content:(\{.*\})', line)
+        if match:
+            fuzzer_data = ast.literal_eval(match.group(1))
+            if fuzzer_name in fuzzer_data.keys():
+                return fuzzer_name, fuzzer_data[fuzzer_name]
+        # obtain the string between {}
+        print(f"Could not find fuzzer harness pairs in line: {line}")
+    return fuzzer_name.strip(), ""
 
 if __name__ == "__main__":
 
