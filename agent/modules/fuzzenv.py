@@ -47,7 +47,8 @@ class FuzzENV():
         self.eval_flag = eval_flag
         if not self.eval_flag:
             self.code_retriever = CodeRetriever(self.benchcfg.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang, self.benchcfg.usage_token_limit, self.benchcfg.cache_root, self.logger)
-            self.harness_pairs = self.get_all_harness_fuzzer_pairs(cache=False)
+            self.harness_pairs = self.get_all_harness_fuzzer_pairs(cache=self.benchcfg.use_cache_harness_pairs)
+             # set the harness pairs in code retriever
             self.code_retriever.set_harness_pairs(self.harness_pairs)
 
     def merge_harness_pairs(self) -> dict[str, str]:
