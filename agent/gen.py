@@ -96,11 +96,15 @@ class ISSTAFuzzer(FuzzENV):
         super().__init__(benchcfg, function_signature, project_name, n_run)
 
         self.oss_fuzz_benchmark = self.get_oss_fuzz_benchmark()
+        
         if self.benchcfg.fixing_mode == "agent":
             self.tool_prompt = load_prompt_template(f"{PROJECT_PATH}/agent/prompts/tool_prompt.txt")
         elif self.benchcfg.header_mode == "agent":
             self.tool_prompt = load_prompt_template(f"{PROJECT_PATH}/agent/prompts/header_prompt.txt")
         else:
+            self.tool_prompt = ""
+
+        if self.project_lang == LanguageType.JAVA:
             self.tool_prompt = ""
 
     def get_oss_fuzz_benchmark(self) -> Optional[benchmarklib.Benchmark]:

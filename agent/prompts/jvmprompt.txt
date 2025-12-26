@@ -1,7 +1,7 @@
 Generate a fuzz driver based on the given function signature in CPP language. 
 
 Tool Infromation:
-
+{tool_prompt}
  You can call the following tools to get more information about the code.
  Prefer higher-priority tools first; only use view_code when you already know the exact file path and a line number:
  
