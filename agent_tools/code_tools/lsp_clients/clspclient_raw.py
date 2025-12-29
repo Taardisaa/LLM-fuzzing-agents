@@ -267,7 +267,7 @@ class ClangdLspClient:
     async def open_file(self, file_path: str):
         """Send a textDocument/didOpen notification to open a file."""
         file_uri = Path(file_path).as_uri()
-        with open(file_path, "r") as f:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             text = f.read()
 
         params = {

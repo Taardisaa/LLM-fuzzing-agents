@@ -104,7 +104,7 @@ class DockerUtils:
 
             # Wait for the container to exit, with a timeout
             container.wait(timeout=timeout)  # Timeout in seconds
-            logs = container.logs().decode('utf-8') 
+            logs = container.logs().decode('utf-8', errors="replace") 
             return logs
 
         except Exception as e:
@@ -145,7 +145,7 @@ class DockerUtils:
         def run_exec():
             try:
                 exec_result = container.exec_run(**exec_kwargs) # type: ignore
-                output = exec_result.output.decode("utf-8") if hasattr(exec_result, "output") else exec_result[1].decode("utf-8")
+                output = exec_result.output.decode("utf-8", errors="replace") if hasattr(exec_result, "output") else exec_result[1].decode("utf-8", errors="replace")
                 result["output"] = output
             except Exception as e:
                 result["output"] = f"{DockerResults.Error.value}: {str(e)}"

@@ -121,7 +121,7 @@ class BaseParser:
             src_node = self.exec_query(query, self.tree.root_node, line)
             if src_node:
                 # Decode the source code to a string
-                return key, src_node.text.decode(), src_node.start_point.row # type: ignore
+                return key, src_node.text.decode(encoding="utf-8", errors="ignore"), src_node.start_point.row # type: ignore
 
         return "", "", 0
     

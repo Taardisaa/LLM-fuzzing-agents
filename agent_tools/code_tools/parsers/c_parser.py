@@ -217,7 +217,7 @@ class CParser(BaseParser):
     def get_decl_funcs(self, node: Node, file_path: Path) -> Optional[FunctionDeclaration]:
    
         # Get parameter list
-        function_name = node.text.decode('utf-8') # type: ignore
+        function_name = node.text.decode('utf-8', errors="ignore") # type: ignore
         signature = function_name
         decl_node = self.get_parent_node(node, "declaration")
         function_type = "function"
@@ -229,7 +229,7 @@ class CParser(BaseParser):
         if not decl_node:
             return None
         
-        signature = decl_node.text.decode('utf-8') # type: ignore
+        signature = decl_node.text.decode('utf-8', errors="ignore") # type: ignore
 
         # Get line number
         line_number = node.start_point[0] + 1

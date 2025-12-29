@@ -178,6 +178,8 @@ class CodeRetriever():
                 text=True,  # Get output as text (str) instead of bytes
                 check=False,
                 shell=True,
+                encoding="utf-8",
+                errors="replace",
                 start_new_session=True  # Prevents inheriting Pool's pipes
                 )
                 result = process.stdout

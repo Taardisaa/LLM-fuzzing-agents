@@ -165,7 +165,7 @@ def _query_introspector(api: str, params: dict) -> Optional[requests.Response]:
             '-----------Response received------------\n'
             '%s\n'
             '------------End of response-------------', resp.url,
-            resp.content.decode('utf-8').strip())
+            resp.content.decode('utf-8', errors="ignore").strip())
         break
       return resp
     except requests.exceptions.Timeout as err:

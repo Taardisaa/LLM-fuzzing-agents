@@ -115,7 +115,7 @@ class JavaParser(BaseParser):
     
 
     def get_decl_funcs(self, node: Node, file_path: Path) -> FunctionDeclaration:
-        function_name = node.text.decode('utf-8') # type: ignore
+        function_name = node.text.decode('utf-8', errors="ignore") # type: ignore
         line_number = node.start_point[0] + 1
         func_decl = FunctionDeclaration(
             name=function_name,

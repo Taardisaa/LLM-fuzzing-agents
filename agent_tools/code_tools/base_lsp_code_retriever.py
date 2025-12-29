@@ -64,7 +64,7 @@ class BaseLSPCodeRetriever():
 
         if lsp_function == LSPFunction.Declaration:
             # template header file, return empty
-            file_text  = Path(file_path).read_text(encoding="utf-8")
+            file_text  = Path(file_path).read_text(encoding="utf-8", errors="ignore")
             if source_code == "" and simplifed_name not in file_text:
                 # if the source code is not found, we will return the full line of the file
                 return []
@@ -78,7 +78,7 @@ class BaseLSPCodeRetriever():
             else:
                 max_lines = 10
             # return 50 lines after lineno
-            lines = Path(file_path).read_text(encoding="utf-8").splitlines()
+            lines = Path(file_path).read_text(encoding="utf-8", errors="ignore").splitlines()
             start_line = max(start_line-5, 0)
             end_line = min(len(lines), start_line + max_lines)
             source_code = "\n".join(lines[start_line:end_line])

@@ -184,7 +184,7 @@ class CodeSearch():
             try:
                 print('do query for api %s' % (symbol_name))
                 output = subprocess.check_output(f'src search -json "file:{file_filter} lang:{self.project_lang.value.lower()} count:{num_results} {symbol_name}"',shell=True, env=dict(os.environ, SRC_ACCESS_TOKEN=SRC_ACCESS_TOKEN), timeout=60)
-                search_res = json.loads(output.decode("utf-8"))
+                search_res = json.loads(output.decode("utf-8", errors="ignore"))
                 if search_res:
                     break
 

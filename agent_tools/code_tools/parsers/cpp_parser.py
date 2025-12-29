@@ -106,7 +106,7 @@ from tree_sitter import Node
 def node_text(node: Optional[Node]) -> str:
     if node is None:
         return ""
-    return node.text.decode('utf-8', errors='replace')  # type: ignore
+    return node.text.decode('utf-8', errors='ignore')  # type: ignore
 
 class CPPParser(CParser):
     def __init__(self, file_path: Optional[Path], source_code: Optional[str] = None):
@@ -208,7 +208,7 @@ class CPPParser(CParser):
     def get_decl_funcs(self, node: Node, file_path: Path) -> Optional[FunctionDeclaration]:
    
         # Get parameter list
-        function_name = node.text.decode('utf-8') # type: ignore
+        function_name = node.text.decode('utf-8', errors="ignore") # type: ignore
         signature = function_name
         decl_node = self.get_parent_node(node, "declaration")
         function_type = "function"
@@ -224,7 +224,7 @@ class CPPParser(CParser):
         if not decl_node:
             return None
         
-        signature = decl_node.text.decode('utf-8') # type: ignore
+        signature = decl_node.text.decode('utf-8', errors="ignore") # type: ignore
 
         # Get line number
         line_number = node.start_point[0] + 1
