@@ -12,6 +12,7 @@ from agent_tools.fuzz_tools.cov_collecter import CovCollector
 import multiprocessing
 import psutil
 import shutil
+import time
 from utils.misc import extract_fuzzer_name
 
 class HarnessEval(FuzzENV):
@@ -39,6 +40,9 @@ class HarnessEval(FuzzENV):
                                             ignore_crashes=self.benchcfg.ignore_crashes, no_log=self.benchcfg.no_log)
         if fuzz_res != ValResult.NoError:
             self.logger.error(f"Crash when fuzzing: {fuzz_res}") if self.logger else None
+            
+            # wait for a while to ensure the crash files are generated
+            time.sleep(30) 
             # return 0,0, False
             # copy the crash file, leak, timeout to save_dir
             out_path = self.benchcfg.oss_fuzz_dir / "build" / "out" /self.new_project_name
@@ -49,7 +53,6 @@ class HarnessEval(FuzzENV):
                     dest_file = self.save_dir / crash_file.name
                     os.makedirs(self.save_dir, exist_ok=True)
                     shutil.copy(crash_file, dest_file)
-
             
         self.logger.info(f"Collecting coverage for {fuzzer_name}") if self.logger else None
         corpus_dir = Path(self.save_dir) / "corpora"
@@ -161,9 +164,9 @@ if __name__ == "__main__":
     from argparse import ArgumentParser
 
     parser  = ArgumentParser(description="Run harness evaluation in parallel.")
-    parser.add_argument("--output_path", type=str, default=f"{PROJECT_PATH}/outputs/java/gpt5-mini/agent", help="Path to the output directory containing success_functions.json")
-    parser.add_argument("--benchcfg_path", type=str, default=f"{PROJECT_PATH}/cfg/gpt5_mini/java_eval.yaml", help="Path to the benchmark configuration YAML file")
-    parser.add_argument("--n_run", type=int, default=1, help="Run number corresponding to success_functions_{n_run}.json")
+    parser.add_argument("--output_path", type=str, default=f"{PROJECT_PATH}/outputs/projects/gpt5-mini/libssh", help="Path to the output directory containing success_functions.json")
+    parser.add_argument("--benchcfg_path", type=str, default=f"{PROJECT_PATH}/cfg/gpt5_mini/projects/libssh_eval.yaml", help="Path to the benchmark configuration YAML file")
+    parser.add_argument("--n_run", type=int, default=3, help="Run number corresponding to success_functions_{n_run}.json")
     parser.add_argument("--n_partitations", type=int, default=1, help="Total number of partitions to divide the workload into.")
     parser.add_argument("--partitation_id", type=int, default=0, help="ID of the partition to process (0-indexed).")
     args = parser.parse_args()
