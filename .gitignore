@@ -174,3 +174,4 @@ benchmark-sets.tar.gz
 project_fuzzing/projects/*
 cfg/gpt5_mini/*
 .gitignore
+tests/samples/*
