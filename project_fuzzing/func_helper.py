@@ -23,6 +23,7 @@ def only_in_lsp(lsp_func_path: Path, cov_func_path: Path) -> Path:
 
     return save_file
 
+
 def filter_functions(lsp_func_path: Path, filter_path_pattern: str) -> None:
     """Filter out functions that are already in the coverage file."""
     with open(lsp_func_path, 'r') as f:

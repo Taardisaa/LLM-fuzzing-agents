@@ -1,7 +1,7 @@
 # Configuration file for the NTU project
-oss_fuzz_dir: /home/yk/code/oss-fuzz/
+oss_fuzz_dir: /home/ruotoy/Desktop/oss-fuzz
 save_root: outputs_wild/gpt5-mini/agent/
-cache_root: /home/yk/code/LLM-reasoning-agents/cache/
+cache_root: /home/ruotoy/Workspace/LLM-fuzzing-agents/agent/cache_all
 model_name: "gpt-5-mini"
 reasoning: false
 temperature: 1

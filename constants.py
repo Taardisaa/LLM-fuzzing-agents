@@ -2,10 +2,10 @@ import os
 from enum import Enum
 
 PROJECT_PATH = os.path.dirname(os.path.abspath(__file__))
-# print(PROJECT_PATH)
 
 ALL_FILE_EXTENSION = [".c", ".cpp", ".java", ".py", ".cc", ".cxx"]
 ALL_HEADER_EXTENSION = [".h", ".hpp", ".hh"]
+
 
 class LSPResults(Enum):
     """Results of Language Server Protocol."""
@@ -16,9 +16,11 @@ class LSPResults(Enum):
     DockerError = "docker error"
     NoSymbol = "no symbol found"
 
+
 class DockerResults(Enum):
     Success = "success"
     Error = "docker error"
+
 
 class Retriever(Enum):
     LSP = "lsp"
@@ -36,6 +38,7 @@ class LanguageType(Enum):
     RUST = "RUST"
     NONE = ''
 
+
 class LSPFunction(Enum):
     Definition = "definition"
     Declaration = "declaration"
@@ -43,6 +46,7 @@ class LSPFunction(Enum):
     StructFunctions = "struct_functions"
     AllSymbols = "all_symbols"
     AllHeaders = "all_headers"
+
 
 class CompileResults(Enum):
     Success = "Complie Success"
@@ -63,7 +67,8 @@ class ValResult(Enum):
     LackCovError = "Lack initial coverage or the final done coverage"
     NoCall = "No call"
     Fake = "Fake Definition"
-    
+
+
 class EvalResult(Enum):
     NoLogError = "Log file does not exist"
     NoHeader = "No Header Found"
@@ -73,7 +78,6 @@ class EvalResult(Enum):
     Fake = "Fake Definition"
     Crash = "Crash"
     ConstantCoverageError = "Constant Coverage Error"
-
 
 
 class ToolDescMode(Enum):
@@ -90,6 +94,8 @@ class CodeSearchAPIName(Enum):
     # StackOverflow = "StackOverflow"
     # CodeSearch = "CodeSearch"
     # 
+
+
 # Entry function for fuzzing.
 FuzzEntryFunctionMapping: dict[LanguageType, str] = {
     LanguageType.C: "LLVMFuzzerTestOneInput",

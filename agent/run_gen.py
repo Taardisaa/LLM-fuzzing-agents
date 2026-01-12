@@ -12,6 +12,8 @@ from bench_cfg import BenchConfig
 import traceback  # Add this at the top
 import json
 from constants import LanguageType
+from typing import Optional, Dict, Tuple, Any, List
+
 
 class Runner:
     def __init__(self, cfg_path: str):
@@ -22,11 +24,16 @@ class Runner:
         self.config = BenchConfig(cfg_path)
         self.cfg_path = cfg_path
         
+
     def get_successful_func(self) -> list[str]:
-    
+        """
+        Get all successful function signatures from previous iterations.
+
+        Returns:
+            list[str]: List of successful function signatures
+        """
         all_success_sig: list[str] = []
         for i in range(1, self.config.iterations):
-
             res_file = os.path.join(self.config.save_root, f"success_functions_{i}.json")
             if not os.path.exists(res_file):
                 continue
@@ -55,6 +62,7 @@ class Runner:
             function_dict[key] = new_function_list
         return function_dict
     
+    
     def get_num_function(self, function_dict: dict[str, list[str]]) -> tuple[int, int]:
         """Get the maximum number of functions across all projects."""
         total = 0
@@ -65,13 +73,13 @@ class Runner:
                 max_num_function = len(function_dict[key])
         return max_num_function, total
 
+
     @staticmethod
     def run_one(config: BenchConfig, function_signature: str, project_name: str, n_run: int=1):
         """Run the fuzzer on a single function."""
 
         agent_fuzzer = ISSTAFuzzer(config, function_signature, project_name, n_run=n_run)
         try:
-        # Your main logic here
             graph = agent_fuzzer.build_graph()
             agent_fuzzer.run_graph(graph)
 

@@ -16,6 +16,7 @@ import yaml
 from pathlib import Path
 from typing import Any
 
+
 def load_functions_scored(project_name: str, project_dir: str):
     """Load functions_scored JSON file for a given project."""
     project_path = Path(project_dir) / project_name

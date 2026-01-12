@@ -15,6 +15,7 @@ import shutil
 import time
 from utils.misc import extract_fuzzer_name
 
+
 class HarnessEval(FuzzENV):
     def __init__(self,  benchcfg: BenchConfig, function_signature: str, project_name: str, local_harness: Path, n_run: int=1):
         super().__init__(benchcfg=benchcfg, function_signature=function_signature, project_name=project_name, n_run=n_run, eval_flag=True)
