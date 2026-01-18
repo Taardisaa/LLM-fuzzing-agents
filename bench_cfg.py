@@ -4,26 +4,56 @@ from typing import Any
 import os
 import yaml
 
+from utils.proto import PathLike
+
+
+def PATH_ASSERT(path: Path):
+    if not path.exists():
+        raise FileNotFoundError(f"Path {path} does not exist.")
+    
 
 class BenchConfig:
-    def __init__(self, config_path: str):
+    """
+    Configuration class for benchmark settings.
+
+    Attributes:
+        oss_fuzz_dir (Path): Path to the OSS-Fuzz directory.
+        cache_root (Path): Path to the cache directory.
+        benchmark_dir (Path): Path to the benchmark directory. benchmark directory contains
+            setting files for each project to be fuzzed, e.g., functions to be fuzzed, paths to harnesses, etc.
+        save_root (Path): Path to output directory. It contains results of harness generations.
+        model_name (str): Name of the language model to be used.
+            Defaults to "gpt-5-mini".
+        reasoning (bool): Whether to enable reasoning in the model. Defaults to False.
+        temperature (float): Temperature setting for the language model. Defaults to 0
+
+    """
+    def __init__(self, config_path: PathLike):
         """Initialize the BenchConfig with configuration from a YAML file.
         Args:
-            config_path (str): Path to the YAML configuration file
+            config_path (PathLike): Path to the YAML configuration file
         """
         self.config = self._load_config(config_path)
         
-        # Initialize all parameters as class members with defaults from config
-        self.oss_fuzz_dir = Path(self.config.get('oss_fuzz_dir', f'/home/yk/code/oss-fuzz/'))
+        # Directory settings
+        
+        
+        oss_fuzz_dir = self.config.get('oss_fuzz_dir')
+        if not oss_fuzz_dir:
+            raise ValueError("oss_fuzz_dir must be specified in the config file.")
+        
+        self.oss_fuzz_dir = Path(oss_fuzz_dir).resolve()
         self.cache_root = Path(self.config.get('cache_root', os.path.join(PROJECT_PATH, "cache")))
-        self.benchmark_dir = Path( self.config.get('bench_dir', os.path.join(PROJECT_PATH, "benchmark-sets", "ntu")))
+        self.benchmark_dir = Path(self.config.get('bench_dir', os.path.join(PROJECT_PATH, "benchmark-sets", "ntu")))
+        # TODO: I am really confused about this.
         self.save_root = Path(self.config.get('save_root', ""))
-
-        # absolute path
         if not self.save_root.is_absolute():
             self.save_root = PROJECT_PATH /  self.save_root
+            
+        # Added by RH: Reuse built docker containers
+        self.existing_docker_name = self.config.get('existing_docker_name', "")
 
-        self.model_name = self.config.get('model_name', "gpt-4-0613")
+        self.model_name = self.config.get('model_name', "gpt-5-mini")
         self.reasoning = self.config.get('reasoning', False)
         self.temperature = self.config.get('temperature', 0.7)
         self.run_time = self.config.get('run_time', 1)
@@ -59,7 +89,8 @@ class BenchConfig:
         # for extracting all functions from project (skip generation)
         self.extract_all_functions = self.config.get('extract_all_functions', False)
 
-    def _load_config(self, config_path: str) -> dict[str, Any]:
+
+    def _load_config(self, config_path: PathLike) -> dict[str, Any]:
         """Load configuration from a YAML file."""
         with open(config_path, 'r') as f:
             return yaml.safe_load(f)

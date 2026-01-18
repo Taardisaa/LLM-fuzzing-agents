@@ -5,11 +5,14 @@ from typing import Callable, Any
 from utils.misc import save_code_to_file
 from pathlib import Path
 from utils.misc import fix_qwen_tool_calls, fix_claude_tool_calls
-from langgraph.graph import END # type: ignore
+from langgraph.graph import END 
+from utils.proto import *
+
 
 class CodeFixer:
-    def __init__(self, runnable: BaseChatModel, max_fix: int, max_tool_call: int, save_dir: Path, 
-                    cache_dir: Path, code_callback:Callable[[str], str] , logger:logging.Logger, model_name: str = ""):
+    def __init__(self, runnable: AcceptedLLM, 
+                max_fix: int, max_tool_call: int, save_dir: Path, 
+                cache_dir: Path, code_callback:Callable[[str], str] , logger:logging.Logger, model_name: str = ""):
 
         self.runnable = runnable
         self.save_dir = save_dir
@@ -26,15 +29,15 @@ class CodeFixer:
         fix_counter = state.get("fix_counter", 0)
         self.logger.info(f"Fix start for draft_fix{fix_counter}.")
         
-        response = None # type: ignore
+        response = None
         for _ in range(3):
-            response: BaseMessage = self.runnable.invoke(state["messages"])
+            response = self.runnable.invoke(state["messages"])
             if hasattr(response, 'invalid_tool_calls') and response.invalid_tool_calls: # type: ignore
                 # Choose the appropriate fix function based on model type
                 if self.model_name.startswith("anthropic"):
-                    response = fix_claude_tool_calls(response)  # type: ignore
+                    response = fix_claude_tool_calls(response)
                 else:
-                    response = fix_qwen_tool_calls(response)  # type: ignore
+                    response = fix_qwen_tool_calls(response)
             if response:
                 break
 

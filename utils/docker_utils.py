@@ -5,6 +5,7 @@ from constants import LanguageType, DockerResults, PROJECT_PATH
 from pathlib import Path
 from typing import Union, Optional, Any
 import threading
+from loguru import logger
 
 # c++  # cpp for tree-sitter
 # go
@@ -26,21 +27,30 @@ class DockerUtils:
 
         # for CPP, the language is c++, other languages are the same as the project language
         self.fuzzing_lang = project_lang.value.lower() if project_lang !=  LanguageType.CPP else "c++"
+        # self.fuzzing_lang = "c"
 
 
     def build_image(self, build_image_cmd: list[str]) -> bool:
         '''Build the image for the project'''
         try:
-            sp.run(build_image_cmd, stdin=sp.DEVNULL, stdout=sp.DEVNULL, stderr=sp.STDOUT, check=True, timeout=1200, start_new_session=True)
+            sp.run(build_image_cmd, 
+                   stdin=sp.DEVNULL, 
+                   stdout=sp.DEVNULL, 
+                   stderr=sp.STDOUT, 
+                   check=True, timeout=1200, start_new_session=True)
             # sp.run(build_image_cmd, stdin=sp.DEVNULL, stdout=None, stderr=None, check=True, timeout=600)
+            logger.info(f"Built image {self.image_name} successfully.")
             return True
         except sp.CalledProcessError as e:
+            logger.error(f"Called process error while building image: {e}")
             return False
         except sp.TimeoutExpired as e:
+            logger.error(f"Timeout expired while building image: {e}")
             return False
         except Exception as e:
-            print(f"Error building image: {e}")
+            logger.error(f"Error building image: {e}")
             return False
+        
 
     def build_fuzzers(self, build_fuzzer_cmd: list[str]) -> bool:
 
@@ -59,7 +69,7 @@ class DockerUtils:
         except sp.TimeoutExpired as e:
             return False
         except Exception as e:
-            print(f"Error building fuzzers: {e}")
+            logger.error(f"Error building fuzzers: {e}")
             return False
 
 
@@ -74,7 +84,7 @@ class DockerUtils:
         except docker.errors.ImageNotFound: # type: ignore
             return "Image not found."       
         except Exception as e:
-            print(f"Error removing image: {e}")
+            logger.error(f"Error removing image: {e}")
             return str(e)
 
     def clean_build_dir(self) -> None:
@@ -204,7 +214,7 @@ class DockerUtils:
             )
             return container.id # type: ignore
         except Exception as e:
-            print(f"Error starting container: {e}")
+            logger.error(f"Error starting container: {e}")
             return f"{DockerResults.Error.value}: {e}"
 
     def remove_container(self, container_id: str) -> None:
@@ -217,4 +227,4 @@ class DockerUtils:
             container.stop()
             container.remove()
         except Exception as e:
-            print(f"Error stopping/removing container: {e}")
+            logger.error(f"Error stopping/removing container: {e}")

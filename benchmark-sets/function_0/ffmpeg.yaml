@@ -1,0 +1,12 @@
+functions:
+- name: ff_aac_ac3_parse
+  signature: int ff_aac_ac3_parse(AVCodecParserContext *,
+    AVCodecContext *,
+    const uint8_t **, 
+    int *,
+    const uint8_t *, 
+    int)
+language: c
+project: ffmpeg
+target_name: target_enc_fuzzer
+target_path: /tools/target_enc_fuzzer.c

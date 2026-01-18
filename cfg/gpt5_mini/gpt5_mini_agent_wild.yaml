@@ -15,12 +15,13 @@ example_mode: random
 example_source: project
 iterations: 1
 num_processes: 8 # Will be set to os.cpu_count()//2 at runtime
-funcs_per_project: 1
+funcs_per_project: 2
 bench_dir: benchmark-sets/function_0
-project_name: ["libssh"]
+project_name: ["ffmpeg"]
 function_signatures: []
 fixing_mode: "agent"
 header_mode: "agent"
 memory_flag: false
 clear_msg_flag: true
 compile_enhance: true
+existing_docker_name: run1_ydipwiadvvblwkpn

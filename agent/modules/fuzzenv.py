@@ -15,16 +15,24 @@ from utils import introspector_utils
 
 class FuzzENV():
 
-    def __init__(self,  benchcfg: BenchConfig, function_signature: str, project_name: str, n_run: int, eval_flag: bool = False):
+    def __init__(self,  
+        benchcfg: BenchConfig, function_signature: str, 
+        project_name: str, n_run: int, eval_flag: bool = False):
         self.benchcfg = benchcfg
         self.early_exit_flag = False
 
         self.project_name = project_name
         self.function_signature = function_signature
         self.n_run = n_run
-        # random generate a string for new project name
-        random_str = ''.join(random.choices("abcdefghijklmnopqrstuvwxyz", k=16))
-        self.new_project_name = f"run{n_run}_{random_str}"
+        
+        if benchcfg.existing_docker_name:
+            self.new_project_name = benchcfg.existing_docker_name
+            left_part, random_str = benchcfg.existing_docker_name.rsplit('_', 1)
+            assert left_part == f"run{n_run}", f"existing_docker_name {benchcfg.existing_docker_name} does not match run{n_run}_* format"
+        else:
+            # random generate a string for new project name
+            random_str = ''.join(random.choices("abcdefghijklmnopqrstuvwxyz", k=16))
+            self.new_project_name = f"run{n_run}_{random_str}"
 
         # benchcfg language does not differentiate c and cpp
         function_name = extract_name(function_signature, keep_namespace=True, language=self.benchcfg.language)
@@ -42,7 +50,8 @@ class FuzzENV():
         self.project_lang = self.oss_tool.get_project_language()
 
         self.docker_tool = DockerUtils(self.benchcfg.oss_fuzz_dir, self.project_name, self.new_project_name, self.project_lang)
-        self.init_workspace()
+        if not self.benchcfg.existing_docker_name:
+            self.init_workspace()
         
         self.eval_flag = eval_flag
         if not self.eval_flag:
@@ -127,7 +136,9 @@ class FuzzENV():
         dst_path = self.benchcfg.oss_fuzz_dir / "projects" / self.new_project_name
         if dst_path.exists():
             # clean the directory
-            shutil.rmtree(dst_path)
+            # shutil.rmtree(dst_path)
+            # RH
+            pass
 
         # copy a backup of the project
         scr_path = self.benchcfg.oss_fuzz_dir / "projects" / self.project_name
@@ -156,6 +167,7 @@ class FuzzENV():
         self.logger.info("Build Image a new project: {}, build res:{}".format(self.new_project_name, build_res))
         # failed to build the image
         assert build_res, "Failed to build the docker image for {}".format(self.new_project_name)
+        return
 
     def modify_dockerfile(self):
         '''Copy the harness file to overwrite all existing harness files'''
@@ -288,10 +300,13 @@ class FuzzENV():
             self.docker_tool.remove_image()
             self.logger.info("remove the docker image for {}".format(self.new_project_name))
             # remove the project directory
-            shutil.rmtree(self.benchcfg.oss_fuzz_dir / "projects" / self.new_project_name)
+            # shutil.rmtree(self.benchcfg.oss_fuzz_dir / "projects" / self.new_project_name)
+            # RH
 
             # clean the build directory
-            shutil.rmtree(self.benchcfg.oss_fuzz_dir / "build" / "out"/ self.new_project_name)
+            # shutil.rmtree(self.benchcfg.oss_fuzz_dir / "build" / "out"/ self.new_project_name)
+            # RH
+
             # remove the corpus, needs root permission
             # corpus_dir = os.path.join(self.save_dir, "corpora")
             # if os.path.exists(corpus_dir):

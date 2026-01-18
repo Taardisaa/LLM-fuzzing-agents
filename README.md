@@ -128,7 +128,7 @@ cache_root: /path/to/cache/                # Cache directory for project LSP dat
 bench_dir: benchmark-sets/all              # Benchmark set directory
 
 # ==================== Model Settings ====================
-model_name: "gpt-4o"                        # LLM model name
+model_name: "gpt-5-mini"                        # LLM model name
 reasoning: false                            # Enable reasoning mode (for o1-style models)
 temperature: 0.7                            # Sampling temperature (0.0-2.0)
 model_token_limit: 8096                     # Maximum tokens for model context
@@ -370,6 +370,11 @@ save_root/
 
 - **C/C++**: Full support with cscope and clangd LSP
 - **Java**: Working with JVM-specific benchmarks
+
+## Existing Issues
+
+1. inconsistent models
+2. 
 
 ## Contributing
 

@@ -13,16 +13,19 @@ import traceback  # Add this at the top
 import json
 from constants import LanguageType
 from typing import Optional, Dict, Tuple, Any, List
+from loguru import logger
 
+from utils.proto import PathLike
 
 class Runner:
-    def __init__(self, cfg_path: str):
+    def __init__(self, cfg_path: PathLike):
         """Initialize the Runner with configuration from a YAML file.
         Args:
             cfg_path (str): Path to the YAML configuration file
         """
         self.config = BenchConfig(cfg_path)
         self.cfg_path = cfg_path
+        return
         
 
     def get_successful_func(self) -> list[str]:
@@ -78,19 +81,44 @@ class Runner:
     def run_one(config: BenchConfig, function_signature: str, project_name: str, n_run: int=1):
         """Run the fuzzer on a single function."""
 
-        agent_fuzzer = ISSTAFuzzer(config, function_signature, project_name, n_run=n_run)
         try:
-            graph = agent_fuzzer.build_graph()
-            agent_fuzzer.run_graph(graph)
+            agent_fuzzer = ISSTAFuzzer(config, function_signature, project_name, n_run=n_run)
+        except Exception as e:
+            logger.error(f"Failed to initialize ISSTAFuzzer for {project_name}::{function_signature}: {e}")
+            return
+        
+        try:
+            compiled_graph = agent_fuzzer.build_graph()
+            agent_fuzzer.run_graph(compiled_graph)
 
         except Exception as e:
             agent_fuzzer.logger.error(f"Exit. An exception occurred: {e}")
             traceback.print_exc() 
+            logger.error(f"Exception details: {e}")
         finally:
             agent_fuzzer.clean_workspace()
+        return
     
 
     def has_run(self, function_signature: str, project_name: str, n_run: int, language: LanguageType) -> bool:
+        """
+        Check whether a specific run for a given function in a project already exists on disk.
+        
+        Args:
+            function_signature (str): Full function signature to identify the function. It will be normalized
+                via extract_name(function_signature, keep_namespace=True, language=language) and then have
+                '::' replaced with '_' before being lowercased for filesystem usage.
+            project_name (str): Project name; lowercased when constructing the path.
+            n_run (int): Run number to check for. The method looks for directory entries whose names start
+                with "run{n_run}" (e.g., "run1").
+            language (LanguageType): Language hint passed to extract_name for correct name extraction.
+        Returns:
+            bool: True if the corresponding save directory exists and contains at least one entry whose
+            name starts with "run{n_run}", False otherwise.
+        Notes:
+            - The checked path is config.save_root / project_name.lower() / function_name.lower().
+            - This method only performs read-only filesystem checks and does not create or modify files.
+        """
         function_name = extract_name(function_signature, keep_namespace=True, language=language)
         function_name = function_name.replace("::", "_")  # replace namespace with underscore
         save_dir = self.config.save_root / project_name.lower() / function_name.lower() 
@@ -107,7 +135,8 @@ class Runner:
 
         return run_flag
 
-    def run_all(self, max_num_function: int, function_dict: dict[str, list[str]],
+
+    def run_all_multiproc(self, max_num_function: int, function_dict: dict[str, list[str]],
                  n_run: int=1, language: LanguageType=LanguageType.CPP):
         """Run the fuzzer on all functions in parallel."""
 
@@ -134,7 +163,35 @@ class Runner:
             pool.close()
             pool.join()
 
-    def run(self):
+    def run_all(self, max_num_function: int, function_dict: dict[str, list[str]],
+                n_run: int=1, language: LanguageType=LanguageType.CPP):
+        """Run the fuzzer on all functions sequentially without multiprocessing.
+        
+        Args:
+            max_num_function: Maximum number of functions across all projects
+            function_dict: Dictionary mapping project names to lists of function signatures
+            n_run: Run iteration number (default: 1)
+            language: Programming language type (default: CPP)
+        """
+        count = 0
+        for i in range(max_num_function):
+            for key in function_dict.keys():
+                if i >= len(function_dict[key]):
+                    continue
+                function_signature = function_dict[key][i]
+                project_name = key
+                language = OSSFuzzUtils(ossfuzz_dir=self.config.oss_fuzz_dir, benchmark_dir=self.config.benchmark_dir, 
+                                        project_name=project_name, new_project_name=project_name).get_project_language()
+                # Check if the function has already been run
+                if self.has_run(function_signature, project_name, n_run, language=language):
+                    continue
+                
+                Runner.run_one(self.config, function_signature, project_name, n_run)
+                count += 1
+
+        print(f"Iteration {n_run} of {self.config.iterations}: {count} functions run sequentially")
+
+    def run(self, multiproc: bool=True):
         """Run parallel execution with configuration from YAML file.
         
         Args:
@@ -146,6 +203,7 @@ class Runner:
         config_file = os.path.join(self.config.save_root, "config.yaml")
         with open(config_file, 'w') as f:
             yaml.dump(self.config, f)
+            
         function_dicts = get_benchmark_functions(self.config.benchmark_dir,
                                                  allowed_projects=self.config.project_name if self.config.project_name else [],
                                                  allowed_functions=self.config.function_signatures,
@@ -168,11 +226,15 @@ class Runner:
                 print("All functions are successful. Exiting...")
                 break
         
-            self.run_all(max_num_function, todo_function_dicts, n_run=i+1, language=self.config.language)
+            if multiproc:
+                self.run_all_multiproc(max_num_function, todo_function_dicts, n_run=i+1, language=self.config.language)
+            else:
+                self.run_all(max_num_function, todo_function_dicts, n_run=i+1, language=self.config.language)
 
             run_agent_res(self.config.save_root, semantic_mode="eval", n_run=i+1, language=self.config.language)
 
         print(f"Total time taken: {time.time()-start_time:.2f} seconds")
+        return
 
     # def run_single(self):
     #     """Run single execution with configuration from YAML file."""
@@ -187,14 +249,8 @@ class Runner:
     #             Runner.run_one(self.config, function_signature, self.config.project_name, n_run=i)
 
 
-
 if __name__ == "__main__":
-    # # Check if the script is being run directly
-    # if len(sys.argv) < 2:
-    #     print("Usage: python run.py <config_path>")
-    #     sys.exit(1)
-
-    # 
+    # TODO
     cfg_list= [
        
         #  "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic.yaml",
@@ -204,7 +260,8 @@ if __name__ == "__main__":
         # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic+header+definition.yaml",
         # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic+header+issta.yaml",
         # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/c_study/gpt5_mini_basic+header+ossfuzz.yaml"
-        "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/projects/gpt5_mini_agent_mosquitto.yaml"
+        # "/home/yk/code/LLM-reasoning-agents/cfg/gpt5_mini/projects/gpt5_mini_agent_mosquitto.yaml"
+        "/home/ruotoy/Workspace/LLM-fuzzing-agents/cfg/gpt5_mini/gpt5_mini_agent_wild.yaml"
     ]
     for config_path in cfg_list:
         runner = Runner(config_path)

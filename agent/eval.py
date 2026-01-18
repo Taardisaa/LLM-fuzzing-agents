@@ -14,6 +14,7 @@ import psutil
 import shutil
 import time
 from utils.misc import extract_fuzzer_name
+from argparse import ArgumentParser
 
 
 class HarnessEval(FuzzENV):
@@ -65,7 +66,6 @@ class HarnessEval(FuzzENV):
         init_cov, final_cov, changed = cov_collector.collect_coverage(self.harness_code, harness_path, fuzzer_name, function_name, corpus_dir)
         
         return init_cov, final_cov, changed
-
 
 
 def process_single_result(args: tuple[str, str, Path, BenchConfig]): # type: ignore
@@ -122,6 +122,7 @@ def process_single_result(args: tuple[str, str, Path, BenchConfig]): # type: ign
         print(f"Error processing {project_name}/{function_signature}: {e}")
         return project_name, function_signature, 0, 0
 
+
 def run_evaluation(output_path: Path, benchcfg:BenchConfig, n_run:int=1, n_partitations:int=1, partitation_id:int=0): 
     """Run the evaluation in parallel"""
 
@@ -131,7 +132,7 @@ def run_evaluation(output_path: Path, benchcfg:BenchConfig, n_run:int=1, n_parti
     # if benchcfg.num_processes is not None:
         # num_processes = min(benchcfg.num_processes, num_processes) # type: ignore
     num_processes = benchcfg.num_processes if benchcfg.num_processes is not None else num_processes # type: ignore
-    res_json = output_path / f"success_functions_{n_run}.json"
+    res_json = output_path.parent / f"success_functions_{n_run}.json"
     if not res_json.exists():
         print(f"No success_functions_{n_run}.json found in {output_path.parent}, exit.")
         return
@@ -157,13 +158,10 @@ def run_evaluation(output_path: Path, benchcfg:BenchConfig, n_run:int=1, n_parti
     # Run evaluation in parallel
     with multiprocessing.Pool(processes=num_processes) as pool: # type: ignore
         results = pool.map(process_single_result, args_list) # type: ignore
+    return
 
-if __name__ == "__main__":
 
-    
-    # using args
-    from argparse import ArgumentParser
-
+def main_argparse():
     parser  = ArgumentParser(description="Run harness evaluation in parallel.")
     parser.add_argument("--output_path", type=str, default=f"{PROJECT_PATH}/outputs/projects/gpt5-mini/libssh", help="Path to the output directory containing success_functions.json")
     parser.add_argument("--benchcfg_path", type=str, default=f"{PROJECT_PATH}/cfg/gpt5_mini/projects/libssh_eval.yaml", help="Path to the benchmark configuration YAML file")
@@ -173,5 +171,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     benchcfg = BenchConfig(args.benchcfg_path)
-    run_evaluation(output_path=Path(args.output_path), benchcfg=benchcfg, n_run=args.n_run,
+    return run_evaluation(output_path=Path(args.output_path), benchcfg=benchcfg, n_run=args.n_run,
                     n_partitations=args.n_partitations, partitation_id=args.partitation_id)
+
+    
+if __name__ == "__main__":
+    # main_argparse()
+    proj_name = "cjson"
+    # /home/ruotoy/Workspace/LLM-fuzzing-agents/outputs_wild/gpt5-mini/agent/success_functions_1.json
+    run_evaluation(output_path=Path(f"/home/ruotoy/Workspace/LLM-fuzzing-agents/outputs_wild/gpt5-mini/agent/{proj_name}"),
+                   benchcfg=BenchConfig(f"/home/ruotoy/Workspace/LLM-fuzzing-agents/cfg/gpt5_mini/projects/{proj_name}_eval.yaml"),
+                   n_run=1, 
+                   n_partitations=1, partitation_id=0)
+    pass

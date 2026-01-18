@@ -12,6 +12,15 @@ functions:
   return_type: int
   signature: cJSON_bool cJSON_PrintPreallocated(cJSON *, char *, const int, const
     cJSON_bool)
+- name: cJSONUtils_FindPointerFromObjectTo
+  params:
+  - name: object
+    type: int
+  - name: target
+    type: int
+  return_type: int
+  signature: char * cJSONUtils_FindPointerFromObjectTo(const cJSON * const, 
+    const cJSON * const)
 language: c++
 project: cjson
 target_name: cjson_read_fuzzer

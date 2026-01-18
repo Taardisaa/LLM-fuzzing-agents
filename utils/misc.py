@@ -5,7 +5,8 @@ import io
 import yaml
 from collections import defaultdict
 from constants import PROJECT_PATH, FuzzEntryFunctionMapping,  LanguageType
-from langgraph.graph import StateGraph # type: ignore
+from langgraph.graph.state import CompiledStateGraph
+from typing import Union
 import re
 import random
 from typing import DefaultDict, Any, Optional
@@ -175,20 +176,46 @@ def save_code_to_file(code: str, file_path: Path) -> None:
     file_path.write_text(code, encoding="utf-8")
 
 
-def plot_graph(graph: Any, save_flag: bool = True) -> None: 
-    # Assuming graph.get_graph().draw_mermaid_png() returns a PNG image file path
-    image_data = graph.get_graph().draw_mermaid_png()
-
-    # Use matplotlib to read and display the image
-    img = plt.imread(io.BytesIO(image_data)) # type: ignore
-    plt.axis('off')  # type: ignore
-
-    if save_flag:
-        plt.savefig("graph.png") # type: ignore
-    else:
-        plt.imshow(img) # type: ignore
-        plt.show()  # type: ignore
-
+def plot_graph(compiled_graph: CompiledStateGraph, 
+               filepath: Union[str, Path] = "agent_graph.png",
+               display: bool = False) -> None:
+    """Visualize and save a LangGraph CompiledStateGraph as a PNG image.
+    
+    Args:
+        compiled_graph: The compiled state graph to visualize
+        filepath: Path where the graph image will be saved (default: "agent_graph.png")
+        display: Whether to display the graph interactively (default: False)
+        
+    Raises:
+        Exception: If graph visualization or file saving fails
+    """
+    try:
+        # Generate mermaid PNG from the compiled graph
+        image_data = compiled_graph.get_graph().draw_mermaid_png()
+        
+        # Read image data
+        img = plt.imread(io.BytesIO(image_data))
+        
+        # Create figure and display
+        fig, ax = plt.subplots(figsize=(12, 8))
+        ax.axis('off')
+        ax.imshow(img)
+        
+        # Save to file
+        plt.savefig(filepath, dpi=300, bbox_inches='tight')
+        
+        # Display if requested
+        if display:
+            plt.show()
+        else:
+            plt.close(fig)
+            
+    except Exception as e:
+        print(f"Failed to plot graph: {e}")
+        if 'fig' in locals():
+            plt.close(fig)
+    
+    return
 
 
 def remove_color_characters(text: str) -> str:
@@ -197,10 +224,11 @@ def remove_color_characters(text: str) -> str:
     return ansi_escape.sub('', text)
 
 
-def load_prompt_template(template_path: str) -> str:
+def load_prompt_template(template_path: str,
+                         encoding: str="utf-8",
+                         errors: str="ignore") -> str:
     '''Load the prompt template'''
-    with open(template_path, 'r') as file:
-        return file.read()
+    return Path(template_path).read_text(encoding=encoding, errors=errors)
 
 
 def add_lineno_to_code(code: str, start_lineno: int) -> str:
@@ -340,13 +368,18 @@ def get_benchmark_functions(bench_dir: Path, allowed_projects:list[str] = [],
 
     for file in all_files:
         # read yaml file
+        project_name = Path(file).stem
+        if allowed_projects and project_name not in allowed_projects:
+            continue
+        
         with open(os.path.join(bench_dir, file), 'r') as f:
             data = yaml.safe_load(f)
             project_name = data.get("project")
+            assert project_name == Path(file).stem
 
             # only allow specific projects
-            if allowed_projects and project_name not in allowed_projects:
-                continue
+            # if allowed_projects and project_name not in allowed_projects:
+                # continue
         
             count = 0
             function_list: list[str] = []

@@ -5,10 +5,11 @@ import logging
 import tiktoken
 import json
 from pathlib import Path
-from langgraph.graph import StateGraph, END, START  # type: ignore
+from langgraph.graph import StateGraph, END, START  
 from constants import LanguageType, FuzzEntryFunctionMapping, Retriever, ValResult, CompileResults, PROJECT_PATH
 from langchain_core.tools import StructuredTool
-from langgraph.prebuilt import ToolNode # type: ignore
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.prebuilt import ToolNode 
 from utils.misc import save_code_to_file, extract_name, load_prompt_template, is_empty_json_file
 from agent.modules.fuzzenv import FuzzENV
 from agent.header.universal import HeaderCompilerWraper
@@ -21,8 +22,9 @@ from agent.modules.validation import Validation
 from agent.modules.generator import HarnessGenerator
 from agent.modules.fixer import CodeFixer
 from agent.modules.semantic_check import SemaCheck
-from typing import Any, Optional
+from typing import Any, Optional, Union
 from langchain_core.language_models import BaseChatModel
+from langchain_core.runnables.config import RunnableConfig
 from bench_cfg import BenchConfig
 from agent_tools.code_search import search_public_usage
 from agent_tools.example_selection import cache_example_selection
@@ -34,9 +36,41 @@ from typing import Annotated
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
 from typing_extensions import TypedDict
-from langgraph.graph.message import add_messages # type: ignore
+from langgraph.graph.message import add_messages
+from loguru import logger
+import sys
+from constants import PROJECT_PATH
+import matplotlib.pyplot as plt
+import io
+from utils.misc import plot_graph
+from utils.proto import *
+from constants import LSPFunction
+      
+# Load .env variables from a .env file if it exists
+from dotenv import load_dotenv
+try:
+    load_dotenv(f"{PROJECT_PATH}/.env")
+except Exception as e:
+    logger.error(f"Failed to load .env file: {e}")
+    exit(1)
+    
 
 class FuzzState(TypedDict):
+    """
+    TypedDict describing the persistent state used by the fuzzing agent.
+
+    Fields:
+        messages (list[str]): Conversation or event messages accumulated during fuzzing.
+            Annotated with `add_messages` to indicate messages should be appended/processed
+            by the annotation helper.
+        harness_code (str): Source code of the current test harness used to exercise the target.
+        build_msg (str): Latest build output, status, or diagnostic message produced during compilation.
+        fuzz_msg (str): Latest fuzzing output, status, or diagnostic message produced during execution.
+        fix_counter (int): Counter tracking the number of fixes/patch attempts applied to the harness or target.
+        fuzzer_name (str): Identifier name of the fuzzer in use.
+        fuzzer_path (Path): Filesystem path to the fuzzer executable, script, or configuration directory.
+        function_signature (str): Signature (name and parameter list) of the target function under test.
+    """
     messages: Annotated[list[str], add_messages]
     harness_code: str
     build_msg: str
@@ -48,8 +82,29 @@ class FuzzState(TypedDict):
 
 
 class SemaCheckNode:
+    """Node for performing semantic validation of generated fuzz harnesses.
+    
+    This node verifies that a syntactically correct harness actually performs
+    meaningful fuzzing of the target function. It checks whether the harness
+    correctly feeds fuzzer-generated data to the target function (e.g., via
+    buffers, files, or other input mechanisms).
+    """
+    
     def __init__(self, oss_fuzz_dir: Path, benchmark_dir: Path, project_name: str, new_project_name: str, 
                  function_signature: str, project_lang: LanguageType, mode: str, logger: logging.Logger):
+        """Initialize the semantic check node.
+        
+        Args:
+            oss_fuzz_dir: Path to the OSS-Fuzz directory.
+            benchmark_dir: Path to the benchmark directory.
+            project_name: Original project name.
+            new_project_name: Modified project name for this fuzzing run.
+            function_signature: Signature of the target function being fuzzed.
+            project_lang: Programming language of the project.
+            mode: Semantic check mode - "no" (skip), "both" (check and allow fixing),
+                or "eval" (check but don't fix).
+            logger: Logger instance for output.
+        """
         self.oss_fuzz_dir = oss_fuzz_dir
         self.project_name = project_name
         self.new_project_name = new_project_name
@@ -59,7 +114,24 @@ class SemaCheckNode:
         self.checker = SemaCheck(oss_fuzz_dir, benchmark_dir, project_name, new_project_name, self.func_name, project_lang)
 
     def check(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Perform semantic validation on the generated harness code.
         
+        Validates that the harness correctly uses fuzzer-generated data to exercise
+        the target function. The behavior depends on the configured mode:
+        - "no": Skip semantic checking entirely
+        - "both": Check semantics and allow fixing if check fails
+        - "eval": Check semantics but end execution on failure (evaluation mode)
+        
+        Args:
+            state: Current state containing harness_code, fuzzer_path, and fuzzer_name.
+        
+        Returns:
+            Updated state dict with messages indicating check result and optional
+            fuzz_msg explaining failures.
+            
+        Raises:
+            ValueError: If an unknown semantic check mode is configured.
+        """
         if self.mode == "no":
             self.logger.info("No semantic check")
             return {"messages": ("user", END)}
@@ -80,6 +152,7 @@ class SemaCheckNode:
                 return{"messages": ("user", END)}
             else:
                 raise ValueError(f"Unknown semantic check mode: {self.mode}")
+
 
 class ISSTAFuzzer(FuzzENV):
     # Constants
@@ -106,6 +179,8 @@ class ISSTAFuzzer(FuzzENV):
 
         if self.project_lang == LanguageType.JAVA:
             self.tool_prompt = ""
+        
+        return
 
     def get_oss_fuzz_benchmark(self) -> Optional[benchmarklib.Benchmark]:
         benchmark_file =  self.benchcfg.benchmark_dir / "{}.yaml".format(self.project_name)
@@ -162,7 +237,6 @@ class ISSTAFuzzer(FuzzENV):
         elif self.benchcfg.header_mode == "agent":
             headers = []
         elif self.benchcfg.header_mode == "oss_fuzz":
-
             # read from cache.
             cache_file = self.benchcfg.cache_root / f"{function_name}_oss_headers.json"
             if cache_file.exists():
@@ -171,13 +245,16 @@ class ISSTAFuzzer(FuzzENV):
                     self.logger.info(f"Loaded headers from cache: {headers}")
                     return headers
 
-            retriever = ContextRetriever(self.oss_fuzz_benchmark)  # type: ignore
+            if not self.oss_fuzz_benchmark:
+                raise ValueError(f"No OSS-Fuzz benchmark found for {function_name} in {self.benchcfg.benchmark_dir}")
+            
+            retriever = ContextRetriever(self.oss_fuzz_benchmark)  
             # context_info = retriever.get_context_info()
-            files = retriever._get_files_to_include() # type: ignore
+            files = retriever._get_files_to_include() 
             header = retriever.get_prefixed_header_file()
             headers = [header] + files
             # filter the headers to only include the header files
-            headers = [h for h in headers if h and  h.endswith(('.h', '.hxx', '.hpp'))] # type: ignore
+            headers = [h for h in headers if h and  h.endswith(('.h', '.hxx', '.hpp'))] 
             if len(headers) == 0:
                 self.logger.warning(f"No header files found for {function_name} in OSS-Fuzz benchmark, use empty string")
         elif self.benchcfg.header_mode == "no":
@@ -194,9 +271,11 @@ class ISSTAFuzzer(FuzzENV):
         
         return header_string
 
+
     def comment_example(self, example_list: list[dict[str, str]]) -> str:
         # leave some tokens for the prompt
         margin_token = self.benchcfg.usage_token_limit
+        # TODO
         enc = tiktoken.encoding_for_model("gpt-4o")
 
         final_example_str = ""
@@ -218,6 +297,7 @@ class ISSTAFuzzer(FuzzENV):
 
         self.logger.info(f"Use {n_used+1} examples.")
         return final_example_str
+   
    
     def select_example(self, example_list: list[dict[str, str]]) -> str:
 
@@ -263,6 +343,7 @@ class ISSTAFuzzer(FuzzENV):
         
         return ""
 
+
     def get_project_usage(self, function_name: str) -> list[dict[str, str]]:
         # save to cache json file
         example_json_file = self.benchcfg.cache_root / self.project_name / f"{function_name}_references_mixed.json"
@@ -290,6 +371,7 @@ class ISSTAFuzzer(FuzzENV):
 
         return code_usages
             
+            
     def get_function_usage(self, function_name: str) -> str:
         self.logger.info(f"Using {self.benchcfg.example_source} for example source")
 
@@ -304,7 +386,7 @@ class ISSTAFuzzer(FuzzENV):
             self.logger.info("Using rank mode for example selection")
             code_usages = cache_example_selection(example_json_file, function_name, self.project_name, self.benchcfg.model_name)
         
-        filter_code_usage = self.filter_examples(code_usages) # type: ignore
+        filter_code_usage = self.filter_examples(code_usages) 
 
         self.logger.info(f"Found {len(filter_code_usage)} usage in the project after removing harness.")
         
@@ -313,11 +395,11 @@ class ISSTAFuzzer(FuzzENV):
             function_usage = self.select_example(filter_code_usage)
         return function_usage
         
+        
     def build_init_prompt(self, prompt_template: str) -> str:
 
         # If extract_all_functions is enabled, extract all symbols and exit
         if self.benchcfg.extract_all_functions:
-            from constants import LSPFunction
             self.logger.info("Extracting all functions from project using LSP...")
             all_symbols = self.code_retriever.get_symbol_info("All", LSPFunction.AllSymbols, Retriever.LSP)
             print(f"Extracted Symbols:{len(all_symbols)}")
@@ -363,6 +445,7 @@ class ISSTAFuzzer(FuzzENV):
 
         return prompt_template
 
+
     def compile_router_mapping(self, state: dict[str, Any]) -> str:
         last_message = state["messages"][-1]
 
@@ -375,6 +458,7 @@ class ISSTAFuzzer(FuzzENV):
         else:
             return END
 
+
     def code_fixer_mapping(self, state:dict[str, Any]) -> str:
         last_message = state["messages"][-1]
 
@@ -385,6 +469,7 @@ class ISSTAFuzzer(FuzzENV):
             return self.FixerToolNode
         else:
             return self.CompilerNode
+
 
     def generator_mapping(self, state: dict[str, Any]) -> str:
         last_message = state["messages"][-1]
@@ -398,6 +483,7 @@ class ISSTAFuzzer(FuzzENV):
         else:
             return self.CompilerNode
         
+        
     def fuzzer_router_mapping(self, state:dict[str, Any]) -> str:
         last_message = state["messages"][-1]
 
@@ -409,6 +495,7 @@ class ISSTAFuzzer(FuzzENV):
         else:
             return self.FixBuilderNode
         
+        
     def semantic_check_router_mapping(self,  state:dict[str, Any]) -> str:
         last_message = state["messages"][-1]
 
@@ -417,21 +504,52 @@ class ISSTAFuzzer(FuzzENV):
         else:
             return self.FixBuilderNode
 
-    def fill_prompt(self, prompt_template: str, **kwargs: dict[str, str]) -> str:
-        for key, value in kwargs.items():
-            prompt_template = prompt_template.replace(f"{{{key}}}", value) # type: ignore
-        return prompt_template
 
-    def load_model(self) -> BaseChatModel:
+    def fill_prompt(self, prompt_template: str, **kwargs: str) -> str:
+        """Fill prompt template with provided kwargs, leaving unmatched placeholders intact.
+        
+        Uses format_map with a custom dict that preserves placeholders for missing keys,
+        allowing partial template substitution.
+        
+        Args:
+            prompt_template: Template string with {placeholder} syntax
+            **kwargs: Key-value pairs to substitute into the template
+            
+        Returns:
+            Formatted string with provided values substituted, unmatched placeholders preserved
+        """
+        class PartialFormatter(dict):
+            def __missing__(self, key):
+                return f"{{{key}}}"
+        
+        return prompt_template.format_map(PartialFormatter(**kwargs))
 
+
+    def load_model(self) -> ChatOpenAI:
+        """Load and return a configured chat model based on bench configuration.
+
+        Behavior:
+        - If `benchcfg.model_name` starts with "gpt": use `ChatOpenAI`.
+            For "gpt-5-mini" the default temperature is used; otherwise the
+            configured `benchcfg.temperature` is passed.
+        - If the name starts with "anthropic": route requests via OpenRouter
+            and include optional reasoning settings in the request body.
+        - Otherwise: use `ChatOpenAI` via OpenRouter with the configured
+            temperature.
+
+        Returns:
+            ChatOpenAI: an initialized chat-capable model instance ready
+            for use by the agent.
+        """
         if self.benchcfg.model_name.startswith("gpt"):
             if "gpt-5-mini" in self.benchcfg.model_name:
                 llm = ChatOpenAI(model=self.benchcfg.model_name)
             else:
                 llm = ChatOpenAI(model=self.benchcfg.model_name, temperature=self.benchcfg.temperature)
         elif self.benchcfg.model_name.startswith("anthropic"):
+            # TODO: Does this really work?
             llm = ChatOpenAI(
-                api_key=os.getenv("OPENROUTER_API_KEY", ""), # type: ignore
+                api_key=lambda: os.getenv("OPENROUTER_API_KEY", ""), 
                 base_url="https://openrouter.ai/api/v1",
                 model=self.benchcfg.model_name,
                 temperature=self.benchcfg.temperature,
@@ -443,11 +561,10 @@ class ISSTAFuzzer(FuzzENV):
                      "strict": False
                  }
                 )
-
-    # }
         else:
+            # TODO: Does this really work?
             llm = ChatOpenAI(
-                api_key=os.getenv("OPENROUTER_API_KEY", ""), # type: ignore
+                api_key=lambda: os.getenv("OPENROUTER_API_KEY", ""), 
                 base_url="https://openrouter.ai/api/v1",
                 model=self.benchcfg.model_name,
                 temperature=self.benchcfg.temperature,
@@ -459,95 +576,111 @@ class ISSTAFuzzer(FuzzENV):
             # llm_extract = ChatOllama(model=self.benchcfg.model_name, temperature=self.benchcfg.temperature, base_url=self.benchcfg.base_url, reasoning=False) 
         return llm
     
-    def load_tools(self) -> list[StructuredTool]:
-
-        header_tool = StructuredTool.from_function(  # type: ignore
-                func=self.code_retriever.get_symbol_header_tool,
-                name="get_symbol_header_tool",
-                description=self.code_retriever.get_symbol_header.__doc__,
-            )
-        definition_tool = StructuredTool.from_function( # type: ignore
-            func=self.code_retriever.get_symbol_definition_tool,
-            name="get_symbol_definition_tool",
-            description=self.code_retriever.get_symbol_definition.__doc__,
-        )
-
-        declaration_tool = StructuredTool.from_function( # type: ignore
-            func=self.code_retriever.get_symbol_declaration_tool,
-            name="get_symbol_declaration_tool",
-            description=self.code_retriever.get_symbol_declaration.__doc__,
-        )
-        view_tool = StructuredTool.from_function( # type: ignore
-            func=self.code_retriever.view_code,
-            name="view_code",
-            description=self.code_retriever.view_code.__doc__,
-        )
-
-        struct_tool = StructuredTool.from_function(  # type: ignore
-            func=self.code_retriever.get_struct_related_functions_tool,
-            name="get_struct_related_functions_tool",
-            description=self.code_retriever.get_struct_related_functions.__doc__,
-        )
-        reference_tool = StructuredTool.from_function(  # type: ignore
-            func=self.code_retriever.get_symbol_references_tool,
-            name="get_symbol_references_tool",
-            description=self.code_retriever.get_symbol_references.__doc__,
-        )
-
-        location_tool = StructuredTool.from_function(  # type: ignore
-            func=self.code_retriever.get_file_location_tool,
-            name="get_file_location_tool",
-            description=self.code_retriever.get_file_location_tool.__doc__,
-        )
-
-        # this tool should not be used for LLM4FDG benchmark since the functions are from the driver examples
-        driver_tool = StructuredTool.from_function(  # type: ignore
-            func=self.code_retriever.get_driver_example_tool,
-            name="get_driver_example_tool",
-            description=self.code_retriever.get_driver_example_tool.__doc__,
-        )
-
-        # add tools
-        tools = []
-        if self.benchcfg.fixing_mode == "agent":
-            tools:list[StructuredTool] = [header_tool, definition_tool, declaration_tool, view_tool, location_tool, struct_tool, driver_tool, reference_tool]
-        if self.benchcfg.header_mode == "agent" and self.benchcfg.fixing_mode != "agent":
-            self.logger.info("Using agent mode for header files, add the header tool")
-            tools:list[StructuredTool] = [header_tool]
-        
-        # remove the some tools for Java
-        if self.project_lang == LanguageType.JAVA:
-            tools =  [definition_tool, view_tool, location_tool, driver_tool, reference_tool]
-        return tools
-
     
-    def build_graph(self) -> StateGraph:
+    def load_tools(self) -> list[StructuredTool]:
+        """Load and configure code retrieval tools for the agent.
+        
+        Creates LangChain StructuredTool instances from code retriever methods.
+        The tools are selected based on configuration modes and project language.
+        
+        Returns:
+            List of StructuredTool instances configured for the current setup.
+        """
+        tool_map = {
+            "header_tool": ("get_symbol_header_tool", self.code_retriever.get_symbol_header_tool, 
+                            self.code_retriever.get_symbol_header.__doc__),
+            "definition_tool": ("get_symbol_definition_tool", self.code_retriever.get_symbol_definition_tool, 
+                                self.code_retriever.get_symbol_definition.__doc__),
+            "declaration_tool": ("get_symbol_declaration_tool", self.code_retriever.get_symbol_declaration_tool, 
+                                 self.code_retriever.get_symbol_declaration.__doc__),
+            "view_tool": ("view_code", self.code_retriever.view_code,
+                          self.code_retriever.view_code.__doc__),
+            "struct_tool": ("get_struct_related_functions_tool", self.code_retriever.get_struct_related_functions_tool,
+                            self.code_retriever.get_struct_related_functions.__doc__),
+            "reference_tool": ("get_symbol_references_tool", self.code_retriever.get_symbol_references_tool,
+                               self.code_retriever.get_symbol_references.__doc__),
+            "location_tool": ("get_file_location_tool", self.code_retriever.get_file_location_tool,
+                              self.code_retriever.get_file_location_tool.__doc__),
+            "driver_tool": ("get_driver_example_tool", self.code_retriever.get_driver_example_tool,
+                            self.code_retriever.get_driver_example_tool.__doc__),
+        }
 
+        # Create all tools from the tool map
+        all_tools = {
+            key: StructuredTool.from_function(
+                func=func,
+                name=name,
+                description=desc,
+            )
+            for key, (name, func, desc) in tool_map.items()
+        }
 
-        llm_extract = ChatOpenAI(model="gpt-5.1-mini")
+        # Select tools based on configuration
+        tools: list[StructuredTool] = []
+        if self.benchcfg.fixing_mode == "agent":
+            tools = [
+                all_tools["header_tool"], 
+                all_tools["definition_tool"], 
+                all_tools["declaration_tool"], 
+                all_tools["view_tool"], 
+                all_tools["location_tool"], 
+                all_tools["struct_tool"], 
+                all_tools["driver_tool"], 
+                all_tools["reference_tool"]
+            ]
+        elif self.benchcfg.header_mode == "agent":
+            self.logger.info("Using agent mode for header files, add the header tool")
+            tools = [all_tools["header_tool"]]
+        
+        # Adjust tools for Java projects
+        if self.project_lang == LanguageType.JAVA:
+            tools = [
+                all_tools["definition_tool"], 
+                all_tools["view_tool"], 
+                all_tools["location_tool"], 
+                all_tools["driver_tool"], 
+                all_tools["reference_tool"]
+            ]
+        
+        return tools
+        
+    
+    def build_graph(self) -> CompiledStateGraph:
+        """Build the agent's CompiledStateGraph.
+        
+        Returns:
+            CompiledStateGraph: The constructed state graph for the fuzzing agent.
+            
+        TODO: refactor and document the detailed state graph.
+        """
+        llm_extract = ChatOpenAI(model=self.benchcfg.model_name, temperature=0)
         llm = self.load_model()
 
         # code formatter
-        llm_code_extract: BaseChatModel = llm_extract.with_structured_output(CodeAnswerStruct) # type: ignore
-        code_formater = CodeFormatTool(llm_code_extract, load_prompt_template(f"{PROJECT_PATH}/agent/prompts/extract_code.txt"))
+        llm_code_extract = llm_extract.with_structured_output(CodeAnswerStruct) 
+        code_formater = CodeFormatTool(llm_code_extract, 
+                    load_prompt_template(f"{PROJECT_PATH}/agent/prompts/extract_code.txt"))
 
         tools = self.load_tools()
         if len(tools) > 0:
-            tool_llm: BaseChatModel = llm.bind_tools(tools) # type: ignore
+            tool_llm: ToolLLM = llm.bind_tools(tools)
         else:
             tool_llm = llm
 
-        draft_responder = HarnessGenerator(tool_llm, self.benchcfg.max_tool_call, continue_flag=True, save_dir=self.save_dir, 
-                                        code_callback=code_formater.extract_code, logger=self.logger, model_name=self.benchcfg.model_name)
+        draft_responder = HarnessGenerator(tool_llm,
+            self.benchcfg.max_tool_call, continue_flag=True, save_dir=self.save_dir, 
+            code_callback=code_formater.extract_code, logger=self.logger, model_name=self.benchcfg.model_name)
 
 
         compile_fix_prompt = load_prompt_template(f"{PROJECT_PATH}/agent/prompts/compile_prompt.txt")
         fuzz_fix_prompt = load_prompt_template(f"{PROJECT_PATH}/agent/prompts/fuzzing_prompt.txt")
 
-        local_compile_fix_prompt =  self.fill_prompt(compile_fix_prompt, tool_prompt=self.tool_prompt,   # type: ignore
-                                                     function_signature=self.function_signature)   # type: ignore
-        local_fuzz_fix_prompt = self.fill_prompt(fuzz_fix_prompt, tool_prompt=self.tool_prompt,  # type: ignore
-                                                 function_signature=self.function_signature)  # type: ignore
+        local_compile_fix_prompt =  self.fill_prompt(compile_fix_prompt, 
+                                                     tool_prompt=self.tool_prompt,   
+                                                     function_signature=self.function_signature)   
+        local_fuzz_fix_prompt = self.fill_prompt(fuzz_fix_prompt, 
+                                                 tool_prompt=self.tool_prompt,  
+                                                 function_signature=self.function_signature)  
 
         if self.benchcfg.fixing_mode == "oss_fuzz":
             prompt_builder = OSSFUZZFixerPromptBuilder
@@ -580,14 +713,14 @@ class ISSTAFuzzer(FuzzENV):
         # add nodes
         tool_node = ToolNode(tools)
 
-        builder.add_node(self.HarnessGeneratorNode, draft_responder.respond) # type: ignore
-        builder.add_node(self.CompilerNode, compiler.compile)  # type: ignore
-        builder.add_node(self.FixBuilderNode, fix_builder.respond)  # type: ignore
-        builder.add_node(self.CodeFixerNode, code_fixer.respond)  # type: ignore
-        builder.add_node(self.FixerToolNode, tool_node) # type: ignore
-        builder.add_node(self.GenerationToolNode, tool_node) # type: ignore
-        builder.add_node(self.FuzzerNode, fuzzer.run_fuzzing) # type: ignore
-        builder.add_node(self.SemanticCheckNode, checker.check) # type: ignore
+        builder.add_node(self.HarnessGeneratorNode, draft_responder.respond) 
+        builder.add_node(self.CompilerNode, compiler.compile)  
+        builder.add_node(self.FixBuilderNode, fix_builder.respond)  
+        builder.add_node(self.CodeFixerNode, code_fixer.respond)  
+        builder.add_node(self.FixerToolNode, tool_node) 
+        builder.add_node(self.GenerationToolNode, tool_node) 
+        builder.add_node(self.FuzzerNode, fuzzer.run_fuzzing) 
+        builder.add_node(self.SemanticCheckNode, checker.check) 
 
         # add edges
         builder.add_edge(START, self.HarnessGeneratorNode)
@@ -604,15 +737,20 @@ class ISSTAFuzzer(FuzzENV):
 
         if self.benchcfg.memory_flag:
             memory = MemorySaver()
-            # the path map is mandatory
-            graph: StateGraph = builder.compile(memory) # type: ignore
         else:
-            graph: StateGraph = builder.compile()  # type: ignore
+            memory = None
+            
+        graph: CompiledStateGraph = builder.compile(checkpointer=memory)
+        plot_graph(graph, filepath="state_graph.png")
         return graph
 
 
-    def run_graph(self, graph: StateGraph) -> None:
+    def run_graph(self, compiled_graph: CompiledStateGraph) -> None:
+        """Execute the agent given its compiled StateGraph.
         
+        Args:
+            compiled_graph (CompiledStateGraph): The compiled state graph to execute.
+        """
         # read prompt according to the project language (extension of the harness file)
         ext_lang = self.oss_tool.get_extension(None)
         if  ext_lang in [LanguageType.CPP, LanguageType.C, LanguageType.JAVA]:
@@ -623,26 +761,38 @@ class ISSTAFuzzer(FuzzENV):
         # build the prompt for initial generator
         generator_prompt = self.build_init_prompt(generator_prompt_template)
 
-        # plot_graph(graph)
-        config = {"configurable": {"thread_id": "1"}, "recursion_limit": 200} # type: ignore
-        events = graph.stream( # type: ignore
-            {"messages": [("user", generator_prompt)], "function_signature": self.function_signature},
+        config = RunnableConfig({
+            "configurable": {"thread_id": "1"}, 
+            "recursion_limit": 200
+        })
+        
+        events = []
+        for event in compiled_graph.stream(
+            {"messages": [("user", generator_prompt)], 
+             "function_signature": self.function_signature},
             config,
             stream_mode="values",
-        )
+        ):
+            events.append(event)
+            pass
 
+        # TODO: kinda ugly.
         with open(os.path.join(self.save_dir, "output.log"), "w") as f:
-            for i, step in enumerate(events): # type: ignore
+            for i, step in enumerate(events): 
                 f.write(f"Step {i}\n")  # Save step number if needed
                 output = io.StringIO()  # Create an in-memory file-like object
                 with contextlib.redirect_stdout(output):  # Capture print output
-                    if step["messages"][-1].type != "tool": # type: ignore
-                        step["messages"][-1].pretty_print()  # type: ignore
+                    if step["messages"][-1].type != "tool": 
+                        step["messages"][-1].pretty_print()  
                     else:
-                        for msg in step["messages"][::-1]:  # type: ignore
-                            if msg.type != "tool":  # type: ignore
+                        for msg in step["messages"][::-1]:  
+                            if msg.type != "tool":  
                                 break
-                            msg.pretty_print()  # type: ignore
+                            msg.pretty_print()  
                 f.write(output.getvalue() + "\n")  # Write captured output to file
 
                 f.flush()
+        
+        return
+    
+    

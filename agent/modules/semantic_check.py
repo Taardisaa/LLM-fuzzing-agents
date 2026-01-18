@@ -494,9 +494,11 @@ class SemaCheck():
             # remove the docker image here
             self.docker_tool.remove_image()
             # remove the project directory
-            shutil.rmtree(os.path.join(self.oss_fuzz_dir, "projects", self.new_project_name))
+            # shutil.rmtree(os.path.join(self.oss_fuzz_dir, "projects", self.new_project_name))
+            # RH
             # clean the build directory
-            shutil.rmtree(os.path.join(self.oss_fuzz_dir, "build", "out", self.new_project_name))
+            # shutil.rmtree(os.path.join(self.oss_fuzz_dir, "build", "out", self.new_project_name))
+            # RH
 
         except:
             pass

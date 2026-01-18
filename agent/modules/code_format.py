@@ -2,6 +2,7 @@ from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field
 import re
 import tiktoken
+from utils.proto import AcceptedLLM
 
 
 class CodeAnswerStruct(BaseModel):
@@ -13,7 +14,7 @@ class CodeAnswerStruct(BaseModel):
 
 class CodeFormatTool():
 
-    def __init__(self, llm: BaseChatModel, prompt: str):
+    def __init__(self, llm: AcceptedLLM, prompt: str):
         self.llm = llm
         self.prompt = prompt
 
@@ -26,7 +27,7 @@ class CodeFormatTool():
             # remove the first line until the error message is short enough
             print("Extract prompt is too long, remove the first line.")
 
-        _respsone: CodeAnswerStruct = self.llm.invoke(extract_prompt) # type: ignore
+        _respsone: CodeAnswerStruct = self.llm.invoke(extract_prompt)   # type: ignore
         source_code = _respsone.source_code 
         # deal with the new line
         # if "\\n" in source_code:
